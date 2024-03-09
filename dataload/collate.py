@@ -25,6 +25,19 @@ def train_collate_fn(batches) -> Dict[str, torch.Tensor]:
 
     return {'image': torch.from_numpy(imgs), 'annot': torch.from_numpy(annot_padded)}
 
+def validation_collate_fn(batches) -> Dict[str, torch.Tensor]:
+    batch = []
+    for b in batches:
+        batch.extend(b)
+        
+    imgs = []
+    for b in batch:
+        imgs.append(b['image'])
+        
+    imgs = np.stack(imgs)
+   
+    return {'image': torch.from_numpy(imgs)}
+
 def infer_collate_fn(batches) -> Dict[str, torch.Tensor]:
     num_splits = []
     imgs = []

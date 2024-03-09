@@ -3,7 +3,7 @@ import math
 import logging
 import numpy as np
 import pandas as pd
-from typing import List, Any, Dict, Tuple
+from typing import List, Any, Dict
 
 import torch
 import torch.nn as nn
@@ -63,9 +63,9 @@ def val(args,
         epoch: int = 0,
         batch_size: int = 16,
         nms_keep_top_k: int = 40,
-        nodule_type_diameters : Dict[str, Tuple[float, float]] = None,
         min_d: int = 0,
         min_size: int = 0,
+        head_indexs: int = [0],
         nodule_size_mode: str = 'seg_size') -> Dict[str, float]:
     
     annot_dir = os.path.join(exp_folder, 'annotation')
@@ -78,13 +78,7 @@ def val(args,
         logger.info('When validating, ignore nodules with depth less than {}'.format(min_d))
     if min_size != 0:
         logger.info('When validating, ignore nodules with size less than {}'.format(min_size))
-    generate_annot_csv(series_list_path = series_list_path, 
-                       save_path = origin_annot_path,
-                       spacing=image_spacing, 
-                       nodule_type_diameters = nodule_type_diameters,
-                       min_d=min_d, 
-                       min_size=min_size, 
-                       mode=nodule_size_mode)
+    generate_annot_csv(series_list_path, origin_annot_path, spacing=image_spacing, min_d=min_d, mid_size=min_size, mode=nodule_size_mode)
     convert_to_standard_csv(csv_path = origin_annot_path, 
                             annot_save_path=annot_path,
                             series_uids_save_path=series_uids_path,
@@ -114,34 +108,38 @@ def val(args,
                     with torch.cuda.amp.autocast():
                         with torch.no_grad():
                             output = model(input)
-                            output = detection_postprocess(output, device=device)
+                            for head_idx in head_indexs:
+                                output = detection_postprocess(output[head_idx], device=device)
+                                outputlist.append(output.data.cpu().numpy())
                 else:
                     with torch.no_grad():
                         output = model(input)
-                        output = detection_postprocess(output, device=device) #1, prob, ctr_z, ctr_y, ctr_x, d, h, w
-                outputlist.append(output.data.cpu().numpy())
+                        for head_idx in head_indexs:
+                            output = detection_postprocess(output[head_idx], device=device) #1, prob, ctr_z, ctr_y, ctr_x, d, h, w
+                            outputlist.append(output.data.cpu().numpy())
             
             outputs = np.concatenate(outputlist, 0)
             
             start_idx = 0
             for i in range(len(num_splits)):
-                n_split = num_splits[i]
-                nzhw = nzhws[i]
-                output = split_comber.combine(outputs[start_idx:start_idx + n_split], nzhw)
-                output = torch.from_numpy(output).view(-1, 8)
-                # Remove the padding
-                object_ids = output[:, 0] != -1.0
-                output = output[object_ids]
+                for _ in range(len(head_indexs)):
+                    n_split = num_splits[i]
+                    nzhw = nzhws[i]
+                    output = split_comber.combine(outputs[start_idx:start_idx + n_split], nzhw)
+                    output = torch.from_numpy(output).view(-1, 8)
+                    # Remove the padding
+                    object_ids = output[:, 0] != -1.0
+                    output = output[object_ids]
+                    
+                    # NMS
+                    if len(output) > 0:
+                        keep = nms_3D(output[:, 1:], overlap=0.05, top_k=nms_keep_top_k)
+                        output = output[keep]
+                    output = output.numpy()
                 
-                # NMS
-                if len(output) > 0:
-                    keep = nms_3D(output[:, 1:], overlap=0.05, top_k=nms_keep_top_k)
-                    output = output[keep]
-                output = output.numpy()
-            
-                preds = convert_to_standard_output(output, series_names[i])  
-                all_preds.extend(preds)
-                start_idx += n_split
+                    preds = convert_to_standard_output(output, series_names[i])  
+                    all_preds.extend(preds)
+                    start_idx += n_split
                 
             progress_bar.update(1)
     # Save the results to csv

@@ -5,7 +5,7 @@ import torch
 import os
 import logging
 
-from networks.ResNet_3D_CPM import Resnet18, DetectionPostprocess
+from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess
 ### data ###
 from dataload.dataset import DetDataset
 from dataload.utils import get_image_padding_value
@@ -19,7 +19,7 @@ from logic.utils import load_model, get_memory_format
 
 from utils.logs import setup_logging
 from utils.utils import init_seed, write_yaml
-from config import SAVE_ROOT, DEFAULT_OVERLAP_RATIO, IMAGE_SPACING, NODULE_TYPE_DIAMETERS
+from config import SAVE_ROOT, DEFAULT_OVERLAP_RATIO, IMAGE_SPACING
 
 logger = logging.getLogger(__name__)
 def get_args():
@@ -101,7 +101,6 @@ if __name__ == '__main__':
                 image_spacing = IMAGE_SPACING,
                 series_list_path=args.val_set,
                 exp_folder=exp_folder,
-                nodule_size_mode=NODULE_TYPE_DIAMETERS,
                 min_d=args.min_d,
                 min_size=args.min_size,
                 nodule_size_mode=args.nodule_size_mode)

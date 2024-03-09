@@ -228,7 +228,7 @@ class ClsRegHead(nn.Module):
 class Resnet18(nn.Module):
     def __init__(self, n_channels=1, n_blocks=[2, 3, 3, 3], n_filters=[64, 96, 128, 160], stem_filters=32,
                  norm_type='batchnorm', head_norm='batchnorm', act_type='ReLU', se=True, aspp=False, dw_type='conv', up_type='deconv', dropout=0.0,
-                 first_stride=(1, 2, 2), detection_loss=None, device=None):
+                 first_stride=(2, 2, 2), detection_loss=None, device=None):
         super(Resnet18, self).__init__()
         assert len(n_blocks) == 4, 'The length of n_blocks should be 4'
         assert len(n_filters) == 4, 'The length of n_filters should be 4'
@@ -262,7 +262,7 @@ class Resnet18(nn.Module):
         else:
             self.dropout = None
             
-        # Decoder
+        # Decoder1
         up_block = UpsamplingDeconvBlock if up_type == 'deconv' else UpsamplingBlock
         self.block33_up = up_block(n_filters[3], n_filters[2], norm_type=norm_type, act_type=act_type)
         self.block33_res = LayerBasic(1, n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
@@ -271,14 +271,23 @@ class Resnet18(nn.Module):
         self.block22_up = up_block(n_filters[2], n_filters[1], norm_type=norm_type, act_type=act_type)
         self.block22_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
         self.block22 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
-        
-        self.block11_up = UpsamplingDeconvBlock(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
+
+        self.block11_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
         self.block11_res = LayerBasic(1, n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
         self.block11 = LayerBasic(2, n_filters[0] * 2, n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
-        # Head
-        # self.head = ClsRegHead(in_channels=n_filters[1], feature_size=n_filters[1], conv_num=3, norm_type=head_norm, act_type=act_type)
-        self.head = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
+
+        # Decoder2
+        self.block33_2_res = LayerBasic(1, n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
+        self.block33_2_up = up_block(n_filters[2], n_filters[1], norm_type=norm_type, act_type=act_type)
         
+        self.block22_2_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        self.block22_2_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
+        self.block22_2 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        
+        # Head
+        self.head1 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
+        self.head2 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
+
         self._init_weight()
 
     def forward(self, inputs):
@@ -307,26 +316,37 @@ class Resnet18(nn.Module):
 
         x = self.block4(x)
 
-        "decode"
+        "decode1"
         x = self.block33_up(x)
         x3 = self.block33_res(x3)
         x = torch.cat([x, x3], dim=1)
         x = self.block33(x)
+        x3_2 = self.block33_2_res(x)
 
         x = self.block22_up(x)
         x2 = self.block22_res(x2)
         x = torch.cat([x, x2], dim=1)
         x = self.block22(x)
+        x2_2 = self.block22_2_res(x)
 
         x = self.block11_up(x)
         x1 = self.block11_res(x1)
         x = torch.cat([x, x1], dim=1)
         x = self.block11(x)
-        out = self.head(x)
+
+        "decode2"
+        x3_2_up = self.block33_2_up(x3_2)
+        x2_2 = torch.cat([x2_2, x3_2_up], dim=1)
+        x2_2 = self.block22_2(x2_2)
+        x2_2_up = self.block22_2_up(x2_2)
+
+        out1 = self.head1(x)
+        out2 = self.head2(x2_2_up)
+
         if self.training:
-            cls_loss, shape_loss, offset_loss, iou_loss = self.detection_loss(out, labels, device=self.device)
+            cls_loss, shape_loss, offset_loss, iou_loss = self.detection_loss([out1, out2], labels, device=self.device)
             return cls_loss, shape_loss, offset_loss, iou_loss
-        return out
+        return [out1, out2]
 
     def _init_weight(self):
         for m in self.modules():
@@ -336,14 +356,23 @@ class Resnet18(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         prior = 0.01
-        nn.init.constant_(self.head.cls_output.weight, 0)
-        nn.init.constant_(self.head.cls_output.bias, -math.log((1.0 - prior) / prior))
+        nn.init.constant_(self.head1.cls_output.weight, 0)
+        nn.init.constant_(self.head1.cls_output.bias, -math.log((1.0 - prior) / prior))
 
-        nn.init.constant_(self.head.shape_output.weight, 0)
-        nn.init.constant_(self.head.shape_output.bias, 0.5)
+        nn.init.constant_(self.head1.shape_output.weight, 0)
+        nn.init.constant_(self.head1.shape_output.bias, 0.5)
 
-        nn.init.constant_(self.head.offset_output.weight, 0)
-        nn.init.constant_(self.head.offset_output.bias, 0.05)
+        nn.init.constant_(self.head1.offset_output.weight, 0)
+        nn.init.constant_(self.head1.offset_output.bias, 0.05)
+
+        nn.init.constant_(self.head2.cls_output.weight, 0)
+        nn.init.constant_(self.head2.cls_output.bias, -math.log((1.0 - prior) / prior))
+
+        nn.init.constant_(self.head2.shape_output.weight, 0)
+        nn.init.constant_(self.head2.shape_output.bias, 0.5)
+
+        nn.init.constant_(self.head2.offset_output.weight, 0)
+        nn.init.constant_(self.head2.offset_output.bias, 0.05)
 
 def make_anchors(feat: torch.Tensor, input_size: List[float], grid_cell_offset=0) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generate anchors from a feature.
@@ -434,7 +463,7 @@ class DetectionLoss(nn.Module):
                 Negative_loss = Negative_loss.sum()
                 cls_loss = Negative_loss
             classification_losses.append(cls_loss / torch.clamp(num_positive_pixels.float(), min=1.0))
-        return torch.mean(torch.stack(classification_losses))
+        return torch.stack(classification_losses)
     
     @staticmethod
     def target_proprocess(annotations: torch.Tensor, 
@@ -601,29 +630,48 @@ class DetectionLoss(nn.Module):
                 (ctr_z, ctr_y, ctr_x, d, h, w, spacing_z, spacing_y, spacing_x, 0 or -1). The last index -1 means the annotation is ignored.
             device: torch.device, the device of the model.
         """
-        Cls = output['Cls']
-        Shape = output['Shape']
-        Offset = output['Offset']
-        batch_size = Cls.size()[0]
-        target_mask_ignore = torch.zeros(Cls.size()).to(device)
-        
+        Cls1 = output[0]['Cls']
+        Shape1 = output[0]['Shape']
+        Offset1 = output[0]['Offset']
+
+        Cls2 = output[1]['Cls']
+        Shape2 = output[1]['Shape']
+        Offset2 = output[1]['Offset']
+        batch_size = Cls1.size()[0]
+        target_mask_ignore = torch.zeros(Cls1.size()).to(device)
+        target2_mask_ignore = torch.zeros(Cls2.size()).to(device)
         # view shape
-        pred_scores = Cls.view(batch_size, 1, -1) # (b, 1, num_points)
-        pred_shapes = Shape.view(batch_size, 3, -1) # (b, 3, num_points)
-        pred_offsets = Offset.view(batch_size, 3, -1)
+        pred1_scores = Cls1.view(batch_size, 1, -1) # (b, 1, num_points)
+        pred1_shapes = Shape1.view(batch_size, 3, -1) # (b, 3, num_points)
+        pred1_offsets = Offset1.view(batch_size, 3, -1)
+
+        pred2_scores = Cls2.view(batch_size, 1, -1) # (b, 1, num_points)
+        pred2_shapes = Shape2.view(batch_size, 3, -1) # (b, 3, num_points)
+        pred2_offsets = Offset2.view(batch_size, 3, -1)
         # (b, num_points, 1 or 3)
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
-        pred_shapes = pred_shapes.permute(0, 2, 1).contiguous()
-        pred_offsets = pred_offsets.permute(0, 2, 1).contiguous()
+        pred1_scores = pred1_scores.permute(0, 2, 1).contiguous()
+        pred1_shapes = pred1_shapes.permute(0, 2, 1).contiguous()
+        pred1_offsets = pred1_offsets.permute(0, 2, 1).contiguous()
+
+        pred2_scores = pred2_scores.permute(0, 2, 1).contiguous()
+        pred2_shapes = pred2_shapes.permute(0, 2, 1).contiguous()
+        pred2_offsets = pred2_offsets.permute(0, 2, 1).contiguous()
         
         # process annotations
         process_annotations, target_mask_ignore = self.target_proprocess(annotations, device, self.crop_size, target_mask_ignore)
         target_mask_ignore = target_mask_ignore.view(batch_size, 1,  -1)
         target_mask_ignore = target_mask_ignore.permute(0, 2, 1).contiguous()
+
+        process2_annotations, target2_mask_ignore = self.target_proprocess(annotations, device, self.crop_size, target2_mask_ignore)
+        target2_mask_ignore = target2_mask_ignore.view(batch_size, 1,  -1)
+        target2_mask_ignore = target2_mask_ignore.permute(0, 2, 1).contiguous()
+
         # generate center points. Only support single scale feature
-        anchor_points, stride_tensor = make_anchors(Cls, self.crop_size, 0) # shape = (num_anchors, 3)
+        anchor_points, stride_tensor = make_anchors(Cls1, self.crop_size, 0) # shape = (num_anchors, 3)
+        # anchor2_points, stride2_tensor = make_anchors(Cls2, self.crop_size, 0) # shape = (num_anchors, 3)
         # predict bboxes (zyxdhw)
-        pred_bboxes = bbox_decode(anchor_points, pred_offsets, pred_shapes, stride_tensor) # shape = (b, num_anchors, 6)
+        pred1_bboxes = bbox_decode(anchor_points, pred1_offsets, pred1_shapes, stride_tensor) # shape = (b, num_anchors, 6)
+        pred2_bboxes = bbox_decode(anchor_points, pred2_offsets, pred2_shapes, stride_tensor) # shape = (b, num_anchors, 6)
         # assigned points and targets (target bboxes zyxdhw)
         target_offset, target_shape, target_bboxes, target_scores, mask_ignore = self.get_pos_target(annotations = process_annotations,
                                                                                                      anchor_points = anchor_points,
@@ -633,20 +681,31 @@ class DetectionLoss(nn.Module):
         # merge mask ignore
         mask_ignore = mask_ignore.bool() | target_mask_ignore.bool()
         fg_mask = target_scores.squeeze(-1).bool()
-        classification_losses = self.cls_loss(pred_scores, target_scores, mask_ignore.int(), num_hard=self.cls_num_hard, fn_weight=self.cls_fn_weight, fn_threshold=self.cls_fn_threshold)
+        classification1_losses = self.cls_loss(pred1_scores, target_scores, mask_ignore.int(), num_hard=self.cls_num_hard, fn_weight=self.cls_fn_weight, fn_threshold=self.cls_fn_threshold)
+        classification2_losses = self.cls_loss(pred2_scores, target_scores, mask_ignore.int(), num_hard=self.cls_num_hard, fn_weight=self.cls_fn_weight, fn_threshold=self.cls_fn_threshold)
+        classification_losses = torch.cat([classification1_losses, classification2_losses]).mean()
         if fg_mask.sum() == 0:
             reg_losses = torch.tensor(0).float().to(device)
             offset_losses = torch.tensor(0).float().to(device)
             iou_losses = torch.tensor(0).float().to(device)
+
         else:
-            reg_losses = torch.abs(pred_shapes[fg_mask] - target_shape[fg_mask]).mean()
-            offset_losses = torch.abs(pred_offsets[fg_mask] - target_offset[fg_mask]).mean()
-            iou_losses = - (self.bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask])).mean()
-        
+            reg1_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])
+            offset1_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask])
+            iou1_losses = - (self.bbox_iou(pred1_bboxes[fg_mask], target_bboxes[fg_mask]))
+            
+            reg2_losses = torch.abs(pred2_shapes[fg_mask] - target_shape[fg_mask])
+            offset2_losses = torch.abs(pred2_offsets[fg_mask] - target_offset[fg_mask])
+            iou2_losses = - (self.bbox_iou(pred2_bboxes[fg_mask], target_bboxes[fg_mask]))
+
+            reg_losses = torch.cat([reg1_losses, reg2_losses]).mean()
+            offset_losses = torch.cat([offset1_losses, offset2_losses]).mean()
+            iou_losses = torch.cat([iou1_losses, iou2_losses]).mean()
+
         return classification_losses, reg_losses, offset_losses, iou_losses
 
 class DetectionPostprocess(nn.Module):
-    def __init__(self, topk: int=60, threshold: float=0.15, nms_threshold: float=0.05, nms_topk: int=20, crop_size: List[int]=[64, 96, 96]):
+    def __init__(self, topk: int=60, threshold: float=0.15, nms_threshold: float=0.05, nms_topk: int=20, crop_size: List[int]=[96, 96, 96]):
         super(DetectionPostprocess, self).__init__()
         self.topk = topk
         self.threshold = threshold

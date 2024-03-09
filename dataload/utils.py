@@ -14,10 +14,10 @@ ALL_RAD = 'all_rad'
 ALL_CLS = 'all_cls'
 
 def gen_dicom_path(folder: str, series_name: str) -> str:
-    return os.path.join(folder, 'npy', f'{series_name}_crop.npy')
+    return os.path.join(folder, series_name, 'npy', f'{series_name}.npy')
 
-def gen_label_path(dir_name: str, name: str) -> str:
-    return os.path.join(dir_name, 'mask', f'{name}_nodule_count_crop.json')
+def gen_label_path(folder: str, series_name: str) -> str:
+    return os.path.join(folder, series_name, 'mask', f'{series_name}_nodule_count.json')
 
 def load_series_list(series_list_path: str) -> List[List[str]]:
     """
@@ -32,8 +32,9 @@ def load_series_list(series_list_path: str) -> List[List[str]]:
     series_list = []
     for series_info in lines:
         series_info = series_info.strip()
-        series_folder, file_name = series_info.split(',')
-        series_list.append([series_folder, file_name])
+        # series_folder, file_name = series_info.split(',')
+        # series_list.append([series_folder, file_name])
+        series_list.append([r'C:\ME_dataset', series_info])
     return series_list
 
 def get_HU_MIN_MAX(window_level: int, window_width: int):
@@ -93,7 +94,7 @@ def load_label(label_path: str, image_spacing: np.ndarray, min_d = 0, min_size =
     Return:
         A dictionary with keys 'all_loc', 'all_rad', 'all_cls'
         (1) 'all_loc': 3D numpy array with shape (n, 3) (z, y, x)
-        (2) 'all_rad': depth, height, width of nodules with shape (n, 3) (z, y, x)
+        (2) 'all_rad': depth, height, width of nodules
         (3) 'all_cls': 1D numpy array with shape (n,)
     """
     min_d = int(min_d)
@@ -103,8 +104,8 @@ def load_label(label_path: str, image_spacing: np.ndarray, min_d = 0, min_size =
     bboxes = np.array(info[BBOXES]) # (n, 2, 3)
     nodule_sizes = np.array(info[NODULE_SIZE]) # (n, 1)
     if len(bboxes) == 0:
-        label = {ALL_LOC: np.zeros((0, 3), dtype=np.float64),
-                ALL_CLS: np.zeros((0, 3), dtype=np.float64),
+        label = {ALL_LOC: np.zeros((0, 3), dtype=np.float32),
+                ALL_CLS: np.zeros((0, 3), dtype=np.float32),
                 ALL_RAD: np.zeros((0,), dtype=np.int32),
                 NODULE_SIZE: np.zeros((0,), dtype=np.int32)}
     else:
@@ -112,8 +113,8 @@ def load_label(label_path: str, image_spacing: np.ndarray, min_d = 0, min_size =
         if (bboxes < 0).any():
             print(f'Warning: {label_path} has negative values')
         # calculate center of bboxes
-        all_loc = ((bboxes[:, 0] + bboxes[:, 1]) / 2).astype(np.float64) # (y, x, z)
-        all_rad = (bboxes[:, 1] - bboxes[:, 0]).astype(np.float64) # (y, x, z)
+        all_loc = ((bboxes[:, 0] + bboxes[:, 1]) / 2).astype(np.float32) # (y, x, z)
+        all_rad = (bboxes[:, 1] - bboxes[:, 0]).astype(np.float32) # (y, x, z)
         
         all_loc = all_loc[:, [2, 0, 1]] # (z, y, x)
         all_rad = all_rad[:, [2, 0, 1]] # (z, y, x)
@@ -126,8 +127,8 @@ def load_label(label_path: str, image_spacing: np.ndarray, min_d = 0, min_size =
         all_cls = np.zeros((all_loc.shape[0],), dtype=np.int32)
 
         if np.sum(valid_mask) == 0:
-            label = {ALL_LOC: np.zeros((0, 3), dtype=np.float64),
-                    ALL_CLS: np.zeros((0, 3), dtype=np.float64),
+            label = {ALL_LOC: np.zeros((0, 3), dtype=np.float32),
+                    ALL_CLS: np.zeros((0, 3), dtype=np.float32),
                     ALL_RAD: np.zeros((0,), dtype=np.int32),
                     NODULE_SIZE: np.zeros((0,), dtype=np.int32)}
         else:

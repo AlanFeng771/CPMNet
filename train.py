@@ -6,18 +6,18 @@ import os
 import logging
 import numpy as np
 from typing import Tuple
-from networks.ResNet_3D_CPM import Resnet18, DetectionPostprocess, DetectionLoss
+from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess, DetectionLoss
 ### data ###
 from dataload.dataset import TrainDataset, DetDataset
 from dataload.utils import get_image_padding_value
-from dataload.collate import train_collate_fn, infer_collate_fn
+from dataload.collate import train_collate_fn, infer_collate_fn, validation_collate_fn
 from dataload.split_combine import SplitComb
 from torch.utils.data import DataLoader
 import transform as transform
 import torchvision
 from torch.utils.tensorboard import SummaryWriter
 ### logic ###
-from logic.train import train
+from logic.train import train, validation
 from logic.val import val
 from logic.utils import write_metrics, save_states, load_states, get_memory_format
 ### optimzer ###
@@ -28,7 +28,7 @@ from optimizer.ema import EMA
 from utils.logs import setup_logging
 from utils.utils import init_seed, get_local_time_str_in_taiwan, write_yaml, load_yaml
 from logic.early_stopping_save import EarlyStoppingSave
-from config import SAVE_ROOT, DEFAULT_OVERLAP_RATIO, IMAGE_SPACING, NODULE_TYPE_DIAMETERS
+from config import SAVE_ROOT, DEFAULT_OVERLAP_RATIO, IMAGE_SPACING
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +38,11 @@ def get_args():
     parser = argparse.ArgumentParser()
     # Rraining settings
     parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
-    parser.add_argument('--mixed_precision', action='store_true', default=False, help='use mixed precision in training')
-    parser.add_argument('--val_mixed_precision', action='store_true', default=False, help='use mixed precision in validation')
-    parser.add_argument('--batch_size', type=int, default=6, help='input batch size for training (default: 6)')
+    parser.add_argument('--mixed_precision', action='store_true', default=False, help='use mixed precision')
+    parser.add_argument('--val_mixed_precision', action='store_true', default=False, help='use mixed precision')
+    parser.add_argument('--batch_size', type=int, default=6, help='input batch size for training (default: 3)')
     parser.add_argument('--val_batch_size', type=int, default=2, help='input batch size for validation (default: 2)')
-    parser.add_argument('--epochs', type=int, default=300, help='number of epochs to train (default: 3000)')
+    parser.add_argument('--epochs', type=int, default=300, help='number of epochs to train (default: 250)')
     parser.add_argument('--crop_size', nargs='+', type=int, default=[96, 96, 96], help='crop size')
     parser.add_argument('--overlap_ratio', type=float, default=DEFAULT_OVERLAP_RATIO, help='overlap ratio')
     # Resume
@@ -55,7 +55,7 @@ def get_args():
     parser.add_argument('--min_d', type=int, default=0, help="min depth of nodule, if some nodule's depth < min_d, it will be` ignored")
     parser.add_argument('--min_size', type=int, default=5, help="min size of nodule, if some nodule's size < min_size, it will be ignored")
     parser.add_argument('--data_norm_method', type=str, default='none', help='normalize method, mean_std or scale or none')
-    parser.add_argument('--memory_format', type=str, default='channels_first', help='memory format of model, channels_first or channels_last, channels_last is faster on linux') # channels_last is faster on linux
+    parser.add_argument('--memory_format', type=str, default='channels_last') # for speed up
     parser.add_argument('--crop_tp_iou', type=float, default=0.7, help='iou threshold for crop tp(Only use for crop_fast InstanceCrop)')
     # Data Augmentation
     parser.add_argument('--tp_ratio', type=float, default=0.75, help='positive ratio in instance crop')
@@ -75,7 +75,7 @@ def get_args():
     parser.add_argument('--apply_ema', action='store_true', default=False, help='apply ema')
     parser.add_argument('--ema_decay', type=float, default=0.999, help='ema decay')
     # Loss hyper-parameters
-    parser.add_argument('--lambda_cls', type=float, default=4.0, help='weights of cls loss')
+    parser.add_argument('--lambda_cls', type=float, default=4.0, help='weights of seg')
     parser.add_argument('--lambda_offset', type=float, default=1.0,help='weights of offset')
     parser.add_argument('--lambda_shape', type=float, default=0.1, help='weights of reg')
     parser.add_argument('--lambda_iou', type=float, default=1.0, help='weights of iou loss')
@@ -94,6 +94,7 @@ def get_args():
     parser.add_argument('--det_nms_topk', type=int, default=20, help='detection nms topk')
     parser.add_argument('--val_iou_threshold', type=float, default=0.1, help='iou threshold for validation')
     parser.add_argument('--val_fixed_prob_threshold', type=float, default=0.65, help='fixed probability threshold for validation')
+    parser.add_argument('--val_head_index', type=int, default=-1, help='choose out head')
     # Network
     parser.add_argument('--norm_type', type=str, default='batchnorm', help='norm type of backbone')
     parser.add_argument('--head_norm', type=str, default='batchnorm', help='norm type of head')
@@ -112,9 +113,8 @@ def get_args():
     parser.add_argument('--max_workers', type=int, default=4, help='max number of workers, num_workers = min(batch_size, max_workers)')
     parser.add_argument('--best_metrics', nargs='+', type=str, default=['froc_2_recall', 'f1_score', 'froc_mean_recall'], help='metric for validation')
     parser.add_argument('--start_val_epoch', type=int, default=150, help='start to validate from this epoch')
-    parser.add_argument('--val_interval', type=int, default=1, help='validate interval')
     parser.add_argument('--exp_name', type=str, default='', metavar='str', help='experiment name')
-    parser.add_argument('--save_model_interval', type=int, default=10, help='how many epochs to wait before saving model')
+    parser.add_argument('--save_model_interval', type=int, default=10, help='how many batches to wait before logging training status')
     args = parser.parse_args()
     return args
 
@@ -203,7 +203,7 @@ def prepare_training(args, device, num_training_steps) -> Tuple[int, Resnet18, A
         logger.info('Load model from "{}"'.format(args.pretrained_model_path))
         load_states(args.pretrained_model_path, device, model)
         
-    return start_epoch, model, optimizer, scheduler_warm, ema, detection_postprocess
+    return start_epoch, model, optimizer, scheduler_warm, ema, detection_postprocess, detection_loss
 
 def build_train_augmentation(args, crop_size: Tuple[int, int, int], pad_value: int, blank_side: int):
     if crop_size[0] == crop_size[1] == crop_size[2]:
@@ -228,14 +228,13 @@ def build_train_augmentation(args, crop_size: Tuple[int, int, int], pad_value: i
     train_transform = torchvision.transforms.Compose(transform_list_train)
     return train_transform
 
-def get_train_dataloder(args, blank_side=0) -> DataLoader:
+def get_train_dataloder(args, validation=False, blank_side=0) -> DataLoader:
     crop_size = args.crop_size
     overlap_size = (np.array(crop_size) * args.overlap_ratio).astype(np.int32).tolist()
     rand_trans = [int(s * 2/3) for s in overlap_size]
     pad_value = get_image_padding_value(args.data_norm_method)
     
     logger.info('Crop size: {}, overlap size: {}, rand_trans: {}, pad value: {}, tp_ratio: {:.3f}'.format(crop_size, overlap_size, rand_trans, pad_value, args.tp_ratio))
-    
     if args.not_use_itk_rotate:
         from dataload.crop_fast import InstanceCrop
         crop_fn_train = InstanceCrop(crop_size=crop_size, overlap_ratio=args.overlap_ratio, tp_ratio=args.tp_ratio, rand_trans=rand_trans, 
@@ -245,7 +244,7 @@ def get_train_dataloder(args, blank_side=0) -> DataLoader:
     elif args.use_rand_spacing:
         from dataload.crop_rand_spacing import InstanceCrop
         crop_fn_train = InstanceCrop(crop_size=crop_size, overlap_ratio=args.overlap_ratio, tp_ratio=args.tp_ratio, rand_trans=rand_trans, rand_rot=args.rand_rot,
-                                     rand_spacing=args.rand_spacing, sample_num=args.num_samples, blank_side=blank_side, instance_crop=True)
+                                    rand_spacing=args.rand_spacing, sample_num=args.num_samples, blank_side=blank_side, instance_crop=True)
         mmap_mode = None
         logger.info('Use itk rotate {} and random spacing {}'.format(args.rand_rot, args.rand_spacing))
     else:
@@ -255,11 +254,12 @@ def get_train_dataloder(args, blank_side=0) -> DataLoader:
         mmap_mode = None
         logger.info('Use itk rotate {}'.format(args.rand_rot))
 
-    train_transform = build_train_augmentation(args, crop_size, pad_value, blank_side)
-    train_dataset = TrainDataset(series_list_path = args.train_set, crop_fn = crop_fn_train, image_spacing=IMAGE_SPACING, transform_post = train_transform, 
-                                 min_d=args.min_d, min_size = args.min_size, norm_method=args.data_norm_method, mmap_mode=mmap_mode)
-    
-    train_loader = DataLoader(train_dataset, 
+    if not validation:
+        train_transform = build_train_augmentation(args, crop_size, pad_value, blank_side)
+        train_dataset = TrainDataset(series_list_path = args.train_set, crop_fn = crop_fn_train, image_spacing=IMAGE_SPACING, transform_post = train_transform, 
+                                    min_d=args.min_d, min_size = args.min_size, norm_method=args.data_norm_method, mmap_mode=mmap_mode)
+        
+        train_loader = DataLoader(train_dataset, 
                               batch_size=args.batch_size, 
                               shuffle=True,
                               collate_fn=train_collate_fn,
@@ -267,6 +267,19 @@ def get_train_dataloder(args, blank_side=0) -> DataLoader:
                               pin_memory=True,
                               drop_last=True, 
                               persistent_workers=True)
+    else:
+        train_transform = build_train_augmentation(args, crop_size, pad_value, blank_side)
+        train_dataset = TrainDataset(series_list_path = args.val_set, crop_fn = crop_fn_train, image_spacing=IMAGE_SPACING, transform_post = train_transform,
+                                    min_d=args.min_d, min_size = args.min_size, norm_method=args.data_norm_method, mmap_mode=mmap_mode)
+        
+        train_loader = DataLoader(train_dataset, 
+                              batch_size=args.batch_size, 
+                              shuffle=False,
+                              collate_fn=train_collate_fn,
+                              num_workers=min(args.batch_size, args.max_workers),
+                              pin_memory=True,
+                              persistent_workers=True)
+    
     logger.info("There are {} training samples and {} batches in '{}'".format(len(train_loader.dataset), len(train_loader), args.train_set))
     return train_loader
 
@@ -309,7 +322,8 @@ if __name__ == '__main__':
     writer = SummaryWriter(log_dir = os.path.join(exp_folder, 'tensorboard'))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader = get_train_dataloder(args)
-    start_epoch, model, optimizer, scheduler_warm, ema, detection_postprocess = prepare_training(args, device, len(train_loader))
+    validation_loader = get_train_dataloder(args, validation=True)
+    start_epoch, model, optimizer, scheduler_warm, ema, detection_postprocess, detection_loss = prepare_training(args, device, len(train_loader))
     val_loader, test_loader = get_val_test_dataloder(args)
     
     if early_stopping is None:
@@ -321,11 +335,27 @@ if __name__ == '__main__':
                             dataloader = train_loader,
                             ema = ema, 
                             device = device)
+        
+        validation_metrics = validation(args = args,
+                            model = model,
+                            optimizer = optimizer,
+                            dataloader = validation_loader,
+                            ema = ema, 
+                            device = device,
+                            detection_loss= detection_loss)
+        
         scheduler_warm.step()
+
         write_metrics(train_metrics, epoch, 'train', writer)
         for key, value in train_metrics.items():
-            logger.info('==> Epoch: {} {}: {:.4f}'.format(epoch, key, value))
+            logger.info('==> train Epoch: {} {}: {:.4f}'.format(epoch, key, value))
         # add learning rate to tensorboard
+        
+        write_metrics(validation_metrics, epoch, 'validation', writer)
+        for key, value in validation_metrics.items():
+            logger.info('==> validation Epoch: {} {}: {:.4f}'.format(epoch, key, value))
+        
+
         logger.info('==> Epoch: {} lr: {:.6f}'.format(epoch, scheduler_warm.get_lr()[0]))
         write_metrics({'lr': scheduler_warm.get_lr()[0]}, epoch, 'train', writer)
         
@@ -336,7 +366,7 @@ if __name__ == '__main__':
                 os.remove(ckpt_path)
         save_states(os.path.join(model_save_dir, f'epoch_{epoch}.pth'), model, optimizer, scheduler_warm, ema)
         
-        if (epoch >= args.start_val_epoch and epoch % args.val_interval == 0) or epoch == args.epochs:
+        if epoch >= args.start_val_epoch: 
             # Use Shadow model to validate and save model
             if ema is not None:
                 ema.apply_shadow()
@@ -350,7 +380,6 @@ if __name__ == '__main__':
                             series_list_path=args.val_set,
                             exp_folder=exp_folder,
                             epoch = epoch,
-                            nodule_type_diameters=NODULE_TYPE_DIAMETERS,
                             min_d=args.min_d,
                             min_size=args.min_size,
                             nodule_size_mode=args.nodule_size_mode)

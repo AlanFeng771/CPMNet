@@ -23,13 +23,27 @@ def train_one_step_wrapper(memory_format):
         return loss, cls_loss, shape_loss, offset_loss, iou_loss
     return train_one_step
 
+def validation_one_step_wrapper(memory_format):
+    def validation_one_step(args, model: nn.modules, sample: Dict[str, torch.Tensor], device: torch.device, detection_loss) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        image = sample['image'].to(device, non_blocking=True, memory_format=memory_format) # z, y, x
+        labels = sample['annot'].to(device, non_blocking=True) # z, y, x, d, h, w, type[-1, 0]
+        # Compute loss
+        out = model(image)
+        cls_loss, shape_loss, offset_loss, iou_loss = detection_loss(out, labels, device=device)
+        cls_loss, shape_loss, offset_loss, iou_loss = cls_loss.mean(), shape_loss.mean(), offset_loss.mean(), iou_loss.mean()
+        loss = args.lambda_cls * cls_loss + args.lambda_shape * shape_loss + args.lambda_offset * offset_loss + args.lambda_iou * iou_loss
+        return loss, cls_loss, shape_loss, offset_loss, iou_loss
+    return validation_one_step
+
 def train(args,
           model: nn.modules,
           optimizer: torch.optim.Optimizer,
           dataloader: DataLoader,
           device: torch.device,
-          ema = None,) -> Dict[str, float]:
+          ema = None) -> Dict[str, float]:
+    
     model.train()
+
     avg_cls_loss = AverageMeter()
     avg_shape_loss = AverageMeter()
     avg_offset_loss = AverageMeter()
@@ -77,6 +91,84 @@ def train(args,
             else:
                 optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+            
+            # Update EMA
+            if ema is not None:
+                ema.update()
+            
+            progress_bar.set_postfix(loss = avg_loss.avg,
+                                    cls_Loss = avg_cls_loss.avg,
+                                    shape_loss = avg_shape_loss.avg,
+                                    offset_loss = avg_offset_loss.avg,
+                                    giou_loss = avg_iou_loss.avg)
+            progress_bar.update()
+    
+    progress_bar.close()
+
+    metrics = {'loss': avg_loss.avg,
+                'cls_loss': avg_cls_loss.avg,
+                'shape_loss': avg_shape_loss.avg,
+                'offset_loss': avg_offset_loss.avg,
+                'iou_loss': avg_iou_loss.avg}
+    return metrics
+
+def validation(args,
+          model: nn.modules,
+          optimizer: torch.optim.Optimizer,
+          dataloader: DataLoader,
+          device: torch.device,
+          detection_loss,
+          ema = None) -> Dict[str, float]:
+    
+    model.eval().to(device)
+
+    avg_cls_loss = AverageMeter()
+    avg_shape_loss = AverageMeter()
+    avg_offset_loss = AverageMeter()
+    avg_iou_loss = AverageMeter()
+    avg_loss = AverageMeter()
+    
+    iters_to_accumulate = args.iters_to_accumulate
+    # mixed precision training
+    mixed_precision = args.mixed_precision
+    if mixed_precision:
+        scaler = torch.cuda.amp.GradScaler()
+        
+    total_num_steps = len(dataloader)
+    memory_format = get_memory_format(getattr(args, 'memory_format', None))
+    if memory_format == torch.channels_last_3d:
+        logger.info('Use memory format: channels_last_3d to train')
+    validation_one_step = validation_one_step_wrapper(memory_format)
+        
+    # optimizer.zero_grad()
+    progress_bar = get_progress_bar('Validation', (total_num_steps - 1) // iters_to_accumulate + 1)
+    for iter_i, sample in enumerate(dataloader):
+        with torch.no_grad():
+            if mixed_precision:
+                with torch.cuda.amp.autocast():
+                    loss, cls_loss, shape_loss, offset_loss, iou_loss = validation_one_step(args, model, sample, device, detection_loss)
+                loss = loss / iters_to_accumulate
+                # scaler.scale(loss).backward()
+            else:
+                loss, cls_loss, shape_loss, offset_loss, iou_loss = validation_one_step(args, model, sample, device, detection_loss)
+                loss = loss / iters_to_accumulate
+                # loss.backward()
+        
+        # Update history
+        avg_cls_loss.update(cls_loss.item() * args.lambda_cls)
+        avg_shape_loss.update(shape_loss.item() * args.lambda_shape)
+        avg_offset_loss.update(offset_loss.item() * args.lambda_offset)
+        avg_iou_loss.update(iou_loss.item() * args.lambda_iou)
+        avg_loss.update(loss.item() * iters_to_accumulate)
+        
+        # Update model
+        if (iter_i + 1) % iters_to_accumulate == 0 or iter_i == total_num_steps - 1:
+            # if mixed_precision:
+            #     scaler.step(optimizer)
+            #     scaler.update()
+            # else:
+            #     optimizer.step()
+            # optimizer.zero_grad(set_to_none=True)
             
             # Update EMA
             if ema is not None:

@@ -1,1 +1,0 @@
-python semi_train.py --pretrained_model_path ./save/pretrained.pth --mixed_precision --val_mixed_precision --unlabeled_train_set ./data/client0_unlabeled_train.txt --train_set ./data/test_bug.txt --val_set ./data/test_bug.txt --test_set ./data/test_bug.txt
