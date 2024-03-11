@@ -272,28 +272,21 @@ class Resnet18(nn.Module):
         self.block22_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
         self.block22 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
 
-        # self.block11_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
-        # self.block11_res = LayerBasic(1, n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
-        # self.block11 = LayerBasic(2, n_filters[0] * 2, n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
+        self.block11_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
+        self.block11_res = LayerBasic(1, n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
+        self.block11 = LayerBasic(2, n_filters[0] * 2, n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
 
         # Decoder2
-        self.block44_2_res = LayerBasic(1, n_filters[3], n_filters[3], norm_type=norm_type, act_type=act_type, se=se)
-        self.block44_2_up = up_block(n_filters[3], n_filters[2], norm_type=norm_type, act_type=act_type)
-        # self.block44_2 = LayerBasic(2, n_filters[2] * 2, n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
-
         self.block33_2_res = LayerBasic(1, n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
         self.block33_2_up = up_block(n_filters[2], n_filters[1], norm_type=norm_type, act_type=act_type)
-        self.block33_2 = LayerBasic(2, n_filters[2] * 2, n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
-
-        # self.block22_2_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
-        # self.block22_2_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
-        # self.block22_2 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
-    
+        
+        self.block22_2_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        self.block22_2_up = up_block(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
+        self.block22_2 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        
         # Head
-        self.head1 = ClsRegHead(in_channels=n_filters[1], feature_size=n_filters[1], conv_num=3, norm_type=head_norm, act_type=act_type)
-        self.head2 = ClsRegHead(in_channels=n_filters[1], feature_size=n_filters[1], conv_num=3, norm_type=head_norm, act_type=act_type)
-        # self.head1 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
-        # self.head2 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
+        self.head1 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
+        self.head2 = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
 
         self._init_weight()
 
@@ -322,7 +315,7 @@ class Resnet18(nn.Module):
             x3 = self.dropout(x3)
 
         x = self.block4(x)
-        x4_2 = self.block44_2_res(x)
+
         "decode1"
         x = self.block33_up(x)
         x3 = self.block33_res(x3)
@@ -334,26 +327,21 @@ class Resnet18(nn.Module):
         x2 = self.block22_res(x2)
         x = torch.cat([x, x2], dim=1)
         x = self.block22(x)
-        # x2_2 = self.block22_2_res(x)
+        x2_2 = self.block22_2_res(x)
 
-        # x = self.block11_up(x)
-        # x1 = self.block11_res(x1)
-        # x = torch.cat([x, x1], dim=1)
-        # x = self.block11(x)
+        x = self.block11_up(x)
+        x1 = self.block11_res(x1)
+        x = torch.cat([x, x1], dim=1)
+        x = self.block11(x)
 
         "decode2"
-        x4_2_up = self.block44_2_up(x4_2)
-        x3_2 = torch.cat([x3_2, x4_2_up], dim=1)
-        x3_2 = self.block33_2(x3_2)
-
         x3_2_up = self.block33_2_up(x3_2)
-        # x2_2 = torch.cat([x2_2, x3_2_up], dim=1)
-        # x2_2 = self.block22_2(x2_2)
-        # x2_2_up = self.block22_2_up(x2_2)
+        x2_2 = torch.cat([x2_2, x3_2_up], dim=1)
+        x2_2 = self.block22_2(x2_2)
+        x2_2_up = self.block22_2_up(x2_2)
 
         out1 = self.head1(x)
-        # out2 = self.head2(x2_2_up)
-        out2 = self.head2(x3_2_up)
+        out2 = self.head2(x2_2_up)
 
         if self.training:
             cls_loss, shape_loss, offset_loss, iou_loss = self.detection_loss([out1, out2], labels, device=self.device)
