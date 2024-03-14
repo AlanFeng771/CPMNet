@@ -97,8 +97,8 @@ def val(args,
             nzhws = sample['nzhws']
             num_splits = sample['num_splits']
             series_names = sample['series_names']
-            outputlist = []
-            
+            # outputlist = []
+            outputlists = [[], []]
             for i in range(int(math.ceil(data.size(0) / batch_size))):
                 end = (i + 1) * batch_size
                 if end > data.size(0):
@@ -107,39 +107,48 @@ def val(args,
                 if args.val_mixed_precision:
                     with torch.cuda.amp.autocast():
                         with torch.no_grad():
-                            output = model(input)
+                            out = model(input)
                             for head_idx in head_indexs:
-                                output = detection_postprocess(output[head_idx], device=device)
-                                outputlist.append(output.data.cpu().numpy())
+                                output = detection_postprocess(out[head_idx], device=device) #1, prob, ctr_z, ctr_y, ctr_x, d, h, w
+                                outputlists[head_idx].append(output.data.cpu().numpy())
+#                                 outputlist.append(output.data.cpu().numpy())
                 else:
                     with torch.no_grad():
                         output = model(input)
                         for head_idx in head_indexs:
-                            output = detection_postprocess(output[head_idx], device=device) #1, prob, ctr_z, ctr_y, ctr_x, d, h, w
-                            outputlist.append(output.data.cpu().numpy())
+                            output = detection_postprocess(out[head_idx], device=device) #1, prob, ctr_z, ctr_y, ctr_x, d, h, w
+                            outputlists[head_idx].append(output.data.cpu().numpy())
             
-            outputs = np.concatenate(outputlist, 0)
+            tot_outputs = [np.concatenate(outputlist, 0) for outputlist in outputlists if outputlist != []]
             
             start_idx = 0
             for i in range(len(num_splits)):
-                for _ in range(len(head_indexs)):
+                tot_output = None
+                for index in range(len(head_indexs)):
+#                     print('tot_outputs', index, tot_outputs[index].shape)
+#                     print(index, start_idx, start_idx + n_split)
                     n_split = num_splits[i]
                     nzhw = nzhws[i]
-                    output = split_comber.combine(outputs[start_idx:start_idx + n_split], nzhw)
+                    output = split_comber.combine(tot_outputs[index][start_idx:start_idx + n_split], nzhw)
                     output = torch.from_numpy(output).view(-1, 8)
                     # Remove the padding
                     object_ids = output[:, 0] != -1.0
                     output = output[object_ids]
+                    if tot_output == None:
+                        tot_output = output
+                    else:
+                        tot_output = torch.cat((tot_output, output), 0)
                     
-                    # NMS
-                    if len(output) > 0:
-                        keep = nms_3D(output[:, 1:], overlap=0.05, top_k=nms_keep_top_k)
-                        output = output[keep]
-                    output = output.numpy()
-                
-                    preds = convert_to_standard_output(output, series_names[i])  
-                    all_preds.extend(preds)
-                    start_idx += n_split
+                # NMS
+                if len(output) > 0:
+                    keep = nms_3D(output[:, 1:], overlap=0.05, top_k=nms_keep_top_k)
+                    output = output[keep]
+                output = output.numpy()
+            
+                preds = convert_to_standard_output(output, series_names[i])  
+                all_preds.extend(preds)
+                start_idx += n_split
+                    
                 
             progress_bar.update(1)
     # Save the results to csv
