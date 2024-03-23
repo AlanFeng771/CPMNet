@@ -6,7 +6,7 @@ import os
 import logging
 import numpy as np
 from typing import Tuple
-from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess, DetectionLoss
+# from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess, DetectionLoss
 ### data ###
 from dataload.dataset import TrainDataset, DetDataset
 from dataload.utils import get_image_padding_value
@@ -36,7 +36,7 @@ early_stopping = None
 
 def get_args():
     parser = argparse.ArgumentParser()
-    # Rraining settings
+    # Training settings
     parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
     parser.add_argument('--mixed_precision', action='store_true', default=False, help='use mixed precision')
     parser.add_argument('--val_mixed_precision', action='store_true', default=False, help='use mixed precision')
@@ -96,6 +96,7 @@ def get_args():
     parser.add_argument('--val_fixed_prob_threshold', type=float, default=0.65, help='fixed probability threshold for validation')
     parser.add_argument('--val_head_index', type=int, default=-1, help='choose out head')
     # Network
+    parser.add_argument('--network_name', type=str, default='ResNet_3D_CPM')
     parser.add_argument('--norm_type', type=str, default='batchnorm', help='norm type of backbone')
     parser.add_argument('--head_norm', type=str, default='batchnorm', help='norm type of head')
     parser.add_argument('--act_type', type=str, default='ReLU', help='act type of network')
@@ -133,8 +134,20 @@ def add_weight_decay(net, weight_decay):
     return [{"params": no_decay, "weight_decay": 0.0},
             {"params": decay, "weight_decay": weight_decay}]
 
-def prepare_training(args, device, num_training_steps) -> Tuple[int, Resnet18, AdamW, GradualWarmupScheduler, DetectionPostprocess]:
-    # build model
+def prepare_training(args, device, num_training_steps) -> Tuple[int, torch.nn.Module, AdamW, GradualWarmupScheduler, torch.nn.Module]:
+    # build mode
+    if args.network_name == 'ResNet_3D_CPM':
+        from networks.ResNet_3D_CPM import Resnet18, DetectionPostprocess, DetectionLoss
+    elif args.network_name == 'ResNet_3D_CPM_stride2':
+        from networks.ResNet_3D_CPM_stride2 import Resnet18, DetectionPostprocess, DetectionLoss
+    elif args.network_name == 'ResNet_3D_CPM_multiHead':
+        from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess, DetectionLoss
+    elif args.network_name == 'ResNet_3D_CPM_multiHead_sride2':
+        from networks.ResNet_3D_CPM_multiHead_sride2 import Resnet18, DetectionPostprocess, DetectionLoss
+    else:
+        print('network_name can\'t find')
+        exit()
+        
     detection_loss = DetectionLoss(crop_size = args.crop_size,
                                    pos_target_topk = args.pos_target_topk, 
                                    pos_ignore_ratio = args.pos_ignore_ratio,

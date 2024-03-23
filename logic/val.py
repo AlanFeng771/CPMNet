@@ -65,7 +65,7 @@ def val(args,
         nms_keep_top_k: int = 40,
         min_d: int = 0,
         min_size: int = 0,
-        head_indexs: int = [0],
+        head_indexs: int = [0, 1],
         nodule_size_mode: str = 'seg_size') -> Dict[str, float]:
     
     annot_dir = os.path.join(exp_folder, 'annotation')

@@ -2,7 +2,7 @@ import os
 import json
 import numpy as np
 from multiprocessing import Pool
-root = 'E:\workspace\medical\LDCT_test_dataset'
+root = 'E:\ME_dataset'
 
 def crop_image(series_folder: str, series_name:str, margins = [8, 8, 0]): # margins = [y, x, z]
     npy_path = os.path.join(series_folder, 'npy', f'{series_name}.npy')
@@ -45,9 +45,12 @@ def crop_image(series_folder: str, series_name:str, margins = [8, 8, 0]): # marg
     with open(crop_nodule_count_path, 'w') as f:
         json.dump(nodule_count, f)
     # crop image
-    image = np.load(npy_path)
-    image = image[y_min:y_max, x_min:x_max, z_min:z_max]
-    np.save(crop_npy_path, image)
+    try:
+        image = np.load(npy_path)
+        image = image[y_min:y_max, x_min:x_max, z_min:z_max]
+        np.save(crop_npy_path, image)
+    except:
+        print(npy_path, 'error')
     
     mask = np.load(mask_path)['image']
     mask = mask[y_min:y_max, x_min:x_max, z_min:z_max]

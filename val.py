@@ -5,7 +5,7 @@ import torch
 import os
 import logging
 
-from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess
+# from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess
 ### data ###
 from dataload.dataset import DetDataset
 from dataload.utils import get_image_padding_value
@@ -46,12 +46,25 @@ def get_args():
     parser.add_argument('--det_nms_threshold', type=float, default=0.05, help='detection nms threshold')
     parser.add_argument('--det_nms_topk', type=int, default=20, help='detection nms topk')
     # other
+    parser.add_argument('--network_name', type=str, default='ResNet_3D_CPM')
     parser.add_argument('--nodule_size_mode', type=str, default='seg_size', help='nodule size mode, seg_size or dhw')
     parser.add_argument('--max_workers', type=int, default=4, help='max number of workers, num_workers = min(batch_size, max_workers)')
     args = parser.parse_args()
     return args
 
 def prepare_validation(args, device):
+     # build mode
+    if args.network_name == 'ResNet_3D_CPM':
+        from networks.ResNet_3D_CPM import DetectionPostprocess
+    elif args.network_name == 'ResNet_3D_CPM_stride2':
+        from networks.ResNet_3D_CPM_stride2 import DetectionPostprocess
+    elif args.network_name == 'ResNet_3D_CPM_multiHead':
+        from networks.ResNet_3D_CPM_multiHead import DetectionPostprocess
+    elif args.network_name == 'ResNet_3D_CPM_multiHead_sride2':
+        from networks.ResNet_3D_CPM_multiHead_sride2 import DetectionPostprocess
+    else:
+        print('network_name can\'t find')
+        exit()
     detection_postprocess = DetectionPostprocess(topk=args.det_topk, 
                                                  threshold=args.det_threshold, 
                                                  nms_threshold=args.det_nms_threshold,
@@ -59,7 +72,7 @@ def prepare_validation(args, device):
                                                  crop_size=args.crop_size)
     # load model
     logger.info('Load model from "{}"'.format(args.model_path))
-    model = load_model(args.model_path)
+    model = load_model(args.model_path, args.network_name)
     memory_format = get_memory_format(getattr(args, 'memory_format', None))
     model = model.to(device = device, memory_format=memory_format)
     return model, detection_postprocess

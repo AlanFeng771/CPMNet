@@ -34,7 +34,7 @@ def load_series_list(series_list_path: str) -> List[List[str]]:
         series_info = series_info.strip()
         # series_folder, file_name = series_info.split(',')
         # series_list.append([series_folder, file_name])
-        series_list.append([r'C:\ME_dataset', series_info])
+        series_list.append([r'E:\ME_dataset', series_info])
     return series_list
 
 def get_HU_MIN_MAX(window_level: int, window_width: int):

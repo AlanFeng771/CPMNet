@@ -52,13 +52,23 @@ def load_states(load_path: str, device: torch.device, model: nn.Module, optimize
             logger.warning(f'Key {key} not found in checkpoint')
         kwargs[key].load_state_dict(checkpoint[key])
         
-def load_model(load_path: str):
+def load_model(load_path: str, network_name: str='ResNet_3D_CPM'):
     checkpoint = torch.load(load_path)
     # Build model
     if 'model_structure' in checkpoint:
         model = checkpoint['model_structure']
     else:
-        from networks.ResNet_3D_CPM import Resnet18
+        if network_name == 'ResNet_3D_CPM':
+            from networks.ResNet_3D_CPM import Resnet18
+        elif network_name == 'ResNet_3D_CPM_stride2':
+            from networks.ResNet_3D_CPM_stride2 import Resnet18
+        elif network_name == 'ResNet_3D_CPM_multiHead':
+            from networks.ResNet_3D_CPM_multiHead import Resnet18
+        elif network_name == 'ResNet_3D_CPM_multiHead_sride2':
+            from networks.ResNet_3D_CPM_multiHead_sride2 import Resnet18
+        else:
+            print('network_name can\'t find')
+            exit()
         model = Resnet18()
         
     # Load state dict

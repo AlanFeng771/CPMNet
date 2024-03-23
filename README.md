@@ -2,6 +2,11 @@
 
 # CPMNetv2: A Simpler and Stronger 3D Object Detection Benchmark in Medical Image
 
+# add network must modify 
+## train.py -> prepare_training(...)
+## val.py -> prepare_validation(...)
+## utils.py -> load_model(...)
+
 # Installation
 ## Create conda env  
 ```bash
