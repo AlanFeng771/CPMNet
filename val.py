@@ -62,6 +62,8 @@ def prepare_validation(args, device):
         from networks.ResNet_3D_CPM_multiHead import DetectionPostprocess
     elif args.network_name == 'ResNet_3D_CPM_multiHead_sride2':
         from networks.ResNet_3D_CPM_multiHead_sride2 import DetectionPostprocess
+    elif args.network_name == 'ResNet_3D_CPM_SCconv':
+        from networks.ResNet_3D_CPM_SCconv import DetectionPostprocess
     else:
         print('network_name can\'t find')
         exit()

@@ -66,6 +66,8 @@ def load_model(load_path: str, network_name: str='ResNet_3D_CPM'):
             from networks.ResNet_3D_CPM_multiHead import Resnet18
         elif network_name == 'ResNet_3D_CPM_multiHead_sride2':
             from networks.ResNet_3D_CPM_multiHead_sride2 import Resnet18
+        elif network_name == 'ResNet_3D_CPM_SCconv':
+            from networks.ResNet_3D_CPM_SCconv import Resnet18
         else:
             print('network_name can\'t find')
             exit()

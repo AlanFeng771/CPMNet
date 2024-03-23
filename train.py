@@ -144,6 +144,8 @@ def prepare_training(args, device, num_training_steps) -> Tuple[int, torch.nn.Mo
         from networks.ResNet_3D_CPM_multiHead import Resnet18, DetectionPostprocess, DetectionLoss
     elif args.network_name == 'ResNet_3D_CPM_multiHead_sride2':
         from networks.ResNet_3D_CPM_multiHead_sride2 import Resnet18, DetectionPostprocess, DetectionLoss
+    elif args.network_name == 'ResNet_3D_CPM_SCconv':
+        from networks.ResNet_3D_CPM_SCconv import Resnet18, DetectionPostprocess, DetectionLoss
     else:
         print('network_name can\'t find')
         exit()
