@@ -1,0 +1,1 @@
+python evaluation.py --annot_path froc/crop_annotation/annotation_val.csv --series_uids_path froc/crop_annotation/seriesuid_val.csv --output_dir froc/cpm_10 --fixed_prob_threshold 0.57250 --pred_results_path save/[2024-03-22-1806]_val_top10/annotation/epoch_test_best_0/predict_epoch_test_best_0.csv
