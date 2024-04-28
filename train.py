@@ -41,7 +41,7 @@ def get_args():
     parser.add_argument('--mixed_precision', action='store_true', default=False, help='use mixed precision')
     parser.add_argument('--val_mixed_precision', action='store_true', default=False, help='use mixed precision')
     parser.add_argument('--batch_size', type=int, default=6, help='input batch size for training (default: 3)')
-    parser.add_argument('--val_batch_size', type=int, default=2, help='input batch size for validation (default: 2)')
+    parser.add_argument('--val_batch_size', type=int, default=1, help='input batch size for validation (default: 2)')
     parser.add_argument('--epochs', type=int, default=300, help='number of epochs to train (default: 250)')
     parser.add_argument('--crop_size', nargs='+', type=int, default=[96, 96, 96], help='crop size')
     parser.add_argument('--overlap_ratio', type=float, default=DEFAULT_OVERLAP_RATIO, help='overlap ratio')
@@ -146,6 +146,8 @@ def prepare_training(args, device, num_training_steps) -> Tuple[int, torch.nn.Mo
         from networks.ResNet_3D_CPM_multiHead_sride2 import Resnet18, DetectionPostprocess, DetectionLoss
     elif args.network_name == 'ResNet_3D_CPM_SCconv':
         from networks.ResNet_3D_CPM_SCconv import Resnet18, DetectionPostprocess, DetectionLoss
+    elif args.network_name == 'ResNet_3D_CPM_dynamicK':
+        from networks.ResNet_3D_CPM_dynamicK import Resnet18, DetectionPostprocess, DetectionLoss
     else:
         print('network_name can\'t find')
         exit()

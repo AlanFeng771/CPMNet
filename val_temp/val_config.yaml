@@ -1,0 +1,24 @@
+!!python/object:argparse.Namespace
+batch_size: 1
+crop_size:
+- 96
+- 96
+- 96
+data_norm_method: none
+det_nms_threshold: 0.05
+det_nms_topk: 20
+det_threshold: 0.15
+det_topk: 60
+max_workers: 4
+memory_format: channels_first
+min_d: 0
+min_size: 5
+model_path: save\[2024-03-24-2018]_\model\epoch_200.pth
+network_name: ResNet_3D_CPM_dynamicK
+nodule_size_mode: seg_size
+overlap_ratio: 0.25
+seed: 0
+val_fixed_prob_threshold: 0.65
+val_iou_threshold: 0.1
+val_mixed_precision: true
+val_set: E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt

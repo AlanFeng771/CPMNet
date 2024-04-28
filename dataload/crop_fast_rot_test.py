@@ -5,7 +5,7 @@ import numpy as np
 import random
 from itertools import product
 from .utils import compute_bbox3d_intersection_volume
-
+from scipy.ndimage import affine_transform
 class InstanceCrop(object):
     """Randomly crop the input image (shape [C, D, H, W])
 
@@ -61,13 +61,95 @@ class InstanceCrop(object):
         
         return crop_centers
     
+    def rotate_image(self, image, angle_x, angle_y, angle_z):
+        # 計算圖像中心
+        center = np.array(image.shape) // 2
+        # 將角度轉換為弧度
+        angle_x = np.radians(angle_x)
+        angle_y = np.radians(angle_y)
+        angle_z = np.radians(angle_z)
+        # 定義旋轉矩陣
+        rotation_matrix = np.array([[np.cos(angle_y)*np.cos(angle_z), -np.cos(angle_x)*np.sin(angle_z) + np.sin(angle_x)*np.sin(angle_y)*np.cos(angle_z), np.sin(angle_x)*np.sin(angle_z) + np.cos(angle_x)*np.sin(angle_y)*np.cos(angle_z), 0],
+                                    [np.cos(angle_y)*np.sin(angle_z), np.cos(angle_x)*np.cos(angle_z) + np.sin(angle_x)*np.sin(angle_y)*np.sin(angle_z), -np.sin(angle_x)*np.cos(angle_z) + np.cos(angle_x)*np.sin(angle_y)*np.sin(angle_z), 0],
+                                    [-np.sin(angle_y), np.sin(angle_x)*np.cos(angle_y), np.cos(angle_x)*np.cos(angle_y), 0],
+                                    [0, 0, 0, 1]])
+        # 將圖像中心設置為原點
+        translation_matrix = np.eye(4)
+        translation_matrix[:3, 3] = -center
+        translation_matrix_inv = np.eye(4)
+        translation_matrix_inv[:3, 3] = center
+        # 將旋轉和平移合併為一個仿射變換矩陣
+        affine_matrix = np.dot(np.dot(translation_matrix_inv, rotation_matrix), translation_matrix)
+        # 對圖像應用仿射變換
+        rotated_image = affine_transform(image, affine_matrix, order=3)
+        return rotated_image
+
+    def rotate_bbox(self, centers, bbox_sizes, rotate_center, angle_x, angle_y, angle_z):
+        simbol = np.unique(np.array([*product(np.array([-1, 1, 1]), np.array([1, -1, 1]), np.array([1, 1, -1]))]), axis=0)
+        # print(simbol*bbox_sizes/2)
+        bbox_sizes = np.expand_dims(bbox_sizes, axis=1)
+        centers = np.expand_dims(centers, axis=1)
+        pos = centers-simbol*bbox_sizes/2
+
+        # fix format [z. y, x, 1]
+        pos_ = np.ones([pos.shape[0], pos.shape[1], pos.shape[2]+1])
+        pos_[:pos.shape[0], :pos.shape[1], :pos.shape[2]] = pos
+        pos_ = pos_.reshape((-1, 4))
+
+        # 計算圖像中心
+        center = rotate_center
+        # 將角度轉換為弧度
+        angle_x = np.radians(angle_x)
+        angle_y = np.radians(angle_y)
+        angle_z = np.radians(angle_z)
+        # 定義旋轉矩陣
+        rotation_matrix = np.array([[np.cos(angle_y)*np.cos(angle_z), -np.cos(angle_x)*np.sin(angle_z) + np.sin(angle_x)*np.sin(angle_y)*np.cos(angle_z), np.sin(angle_x)*np.sin(angle_z) + np.cos(angle_x)*np.sin(angle_y)*np.cos(angle_z), 0],
+                                    [np.cos(angle_y)*np.sin(angle_z), np.cos(angle_x)*np.cos(angle_z) + np.sin(angle_x)*np.sin(angle_y)*np.sin(angle_z), -np.sin(angle_x)*np.cos(angle_z) + np.cos(angle_x)*np.sin(angle_y)*np.sin(angle_z), 0],
+                                    [-np.sin(angle_y), np.sin(angle_x)*np.cos(angle_y), np.cos(angle_x)*np.cos(angle_y), 0],
+                                    [0, 0, 0, 1]])
+        # 將圖像中心設置為原點
+        translation_matrix = np.eye(4)
+        translation_matrix[:3, 3] = -center
+        translation_matrix_inv = np.eye(4)
+        translation_matrix_inv[:3, 3] = center
+        # 將旋轉和平移合併為一個仿射變換矩陣
+        affine_matrix = np.dot(np.dot(translation_matrix_inv, rotation_matrix), translation_matrix)
+        # 對圖像應用仿射變換
+        # rotated_coord = affine_transform(centers, affine_matrix, order=3)
+        rotated_coord =  np.dot(affine_matrix, pos_.T)
+        rotated_coord = rotated_coord.T[:, :-1]
+        rotated_coord = rotated_coord.reshape((-1, 8, 3)) 
+        rotated_center = (np.max(rotated_coord, 1) + np.min(rotated_coord, 1))/2
+        rotated_shape = np.max(rotated_coord, 1) - np.min(rotated_coord, 1)
+        return rotated_center, rotated_shape
+    def rand_rotate(self, image, instance_loc, instance_shape, angle_range_d, angle_range_h, angle_range_w, p):
+        rot_center = np.array(image.shape) // 2
+        angle_x = 0
+        angle_y = 0
+        angle_z = 0
+        if (angle_range_d[1]-angle_range_d[0] > 0) and (random.random() < p):
+            angle_x = np.random.uniform(angle_range_d[0], angle_range_d[1])
+
+        if (angle_range_h[1]-angle_range_h[0] > 0) and (random.random() < p):
+            angle_y = np.random.uniform(angle_range_h[0], angle_range_h[1])
+
+        if (angle_range_w[1]-angle_range_w[0] > 0) and (random.random() < p):
+            angle_z = np.random.uniform(angle_range_w[0], angle_range_w[1])
+        print(angle_x, angle_y, angle_z)
+        rotated_image = self.rotate_image(image, angle_x, angle_y, angle_z)
+        rotated_loc, rotated_shape = self.rotate_bbox(instance_loc, instance_shape, rot_center,  -angle_x, -angle_y, -angle_z)
+
+        return rotated_image, rotated_loc, rotated_shape
     def __call__(self, sample, image_spacing: np.ndarray):
         image = sample['image']
         all_loc = sample['all_loc']
         all_rad = sample['all_rad']
         all_cls = sample['all_cls']
-        
         all_rad_pixel = all_rad / image_spacing
+        if self.rand_rot is not None:
+            image, all_loc, all_rad_pixel = self.rand_rotate(image, all_loc , all_rad_pixel, [-self.rand_rot[0], self.rand_rot[0]],
+                                    [-self.rand_rot[1], self.rand_rot[1]],
+                                    [-self.rand_rot[2], self.rand_rot[2]], p=0.8)
         all_nodule_bb_min = all_loc - all_rad_pixel / 2
         all_nodule_bb_max = all_loc + all_rad_pixel / 2
         nodule_bboxes = np.stack([all_nodule_bb_min, all_nodule_bb_max], axis=1) # [N, 2, 3]
@@ -84,18 +166,18 @@ class InstanceCrop(object):
         # Generate crop centers
         crop_centers = [*product(z_crop_centers, y_crop_centers, x_crop_centers)]
         crop_centers = np.array(crop_centers)
-        # print('crop_center 1', crop_centers.shape)
-        # print(crop_centers)
+        
         if self.instance_crop and len(instance_loc) > 0:
-            if self.rand_trans is not None:
-                instance_crop = instance_loc + np.random.randint(low=-self.rand_trans, high=self.rand_trans, size=(len(instance_loc), 3))
-            else:
-                instance_crop = instance_loc
+            ## why random twice
+            # if self.rand_trans is not None:
+            #     instance_crop = instance_loc + np.random.randint(low=-self.rand_trans, high=self.rand_trans, size=(len(instance_loc), 3))
+            # else:
+            #     instance_crop = instance_loc
+            instance_crop = instance_loc
             crop_centers = np.append(crop_centers, instance_crop, axis=0)
 
         if self.rand_trans is not None:
             crop_centers = crop_centers + np.random.randint(low=-self.rand_trans, high=self.rand_trans, size=(len(crop_centers), 3))
-        
         
         all_crop_bb_min = crop_centers - crop_size / 2
         all_crop_bb_min = np.clip(all_crop_bb_min, a_min=0, a_max=shape - crop_size)

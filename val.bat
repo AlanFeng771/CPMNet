@@ -1,0 +1,1 @@
+python val.py --val_set E:/Jack/Me_dataset_dicom_resize_npy/test/data_list_crop.txt --val_mixed_precision --model_path save\[2024-04-12-1108]_test\best\best_froc_mean_recall.pth --batch_size 1

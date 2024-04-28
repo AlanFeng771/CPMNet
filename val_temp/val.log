@@ -1,0 +1,50 @@
+2024-03-25 16:08:30,927 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val_refined.py:81
+2024-03-25 16:08:31,600 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val_refined.py:92
+2024-03-25 16:10:42,518 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val.py:78
+2024-03-25 16:10:43,159 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val.py:89
+2024-03-25 16:10:43,162 INFO There are 29 samples in the val set val.py:95
+2024-03-25 16:10:43,165 INFO Save validation results to "save\[2024-03-24-2018]_\model\val_temp" val.py:111
+2024-03-25 16:10:43,167 INFO Val set: "E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt" val.py:112
+2024-03-25 16:10:43,169 INFO When validating, ignore nodules with size less than 5 val.py:80
+2024-03-25 16:12:41,924 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val.py:78
+2024-03-25 16:12:42,512 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val.py:89
+2024-03-25 16:12:42,518 INFO There are 29 samples in the val set val.py:95
+2024-03-25 16:12:42,522 INFO Save validation results to "save\[2024-03-24-2018]_\model\val_temp" val.py:111
+2024-03-25 16:12:42,524 INFO Val set: "E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt" val.py:112
+2024-03-25 16:12:42,526 INFO When validating, ignore nodules with size less than 5 val.py:80
+2024-03-25 16:14:20,115 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val.py:78
+2024-03-25 16:14:20,701 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val.py:89
+2024-03-25 16:14:20,704 INFO There are 29 samples in the val set val.py:95
+2024-03-25 16:14:20,707 INFO Save validation results to "save\[2024-03-24-2018]_\model\val_temp" val.py:111
+2024-03-25 16:14:20,709 INFO Val set: "E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt" val.py:112
+2024-03-25 16:14:20,712 INFO When validating, ignore nodules with size less than 5 val.py:80
+2024-03-25 16:15:18,529 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val.py:78
+2024-03-25 16:15:19,135 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val.py:89
+2024-03-25 16:15:19,138 INFO There are 29 samples in the val set val.py:95
+2024-03-25 16:15:19,141 INFO Save validation results to "save\[2024-03-24-2018]_\model\val_temp" val.py:111
+2024-03-25 16:15:19,143 INFO Val set: "E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt" val.py:112
+2024-03-25 16:15:19,146 INFO When validating, ignore nodules with size less than 5 val.py:80
+2024-03-25 16:16:38,687 INFO Load model from "save\[2024-03-24-2018]_\model\epoch_200.pth" val.py:78
+2024-03-25 16:16:39,233 INFO Crop size: [96, 96, 96], overlap size: [24, 24, 24] val.py:89
+2024-03-25 16:16:39,236 INFO There are 29 samples in the val set val.py:95
+2024-03-25 16:16:39,240 INFO Save validation results to "save\[2024-03-24-2018]_\model\val_temp" val.py:111
+2024-03-25 16:16:39,242 INFO Val set: "E:/Jack/Me_dataset_dicom_resize_npy/val/data_list_crop.txt" val.py:112
+2024-03-25 16:16:39,244 INFO When validating, ignore nodules with size less than 5 val.py:80
+2024-03-25 16:17:40,895 INFO Total number of nodule annotations: 71 eval.py:580
+2024-03-25 16:17:40,958 INFO Fixed threshold: 0.65 eval.py:387
+2024-03-25 16:17:40,960 INFO benign              : Recall=0.471, Precision=1.000, F1=0.640, TP=   8, FP=   0, FN=   9 eval.py:417
+2024-03-25 16:17:40,963 INFO probably_benign     : Recall=0.854, Precision=0.515, F1=0.642, TP=  35, FP=  33, FN=   6 eval.py:417
+2024-03-25 16:17:40,966 INFO probably_suspicious : Recall=1.000, Precision=0.417, F1=0.588, TP=  10, FP=  14, FN=   0 eval.py:417
+2024-03-25 16:17:40,970 INFO suspicious          : Recall=0.667, Precision=0.250, F1=0.364, TP=   2, FP=   6, FN=   1 eval.py:417
+2024-03-25 16:17:40,972 INFO All                 : Recall=0.775, Precision=0.509, F1=0.615, TP=  55, FP=  53, FN=  16 eval.py:418
+2024-03-25 16:17:40,975 INFO Recall(series_based): 0.850 eval.py:425
+2024-03-25 16:17:45,488 INFO Best F1 score: 0.6891 at threshold: 0.721, Sens: 0.693, Prec: 0.686 eval.py:449
+2024-03-25 16:17:46,806 INFO ==> Epoch: 0 val.py:174
+2024-03-25 16:17:46,808 INFO ==> fps:0.125 iou 0.1 frocs:0.3874 val.py:176
+2024-03-25 16:17:46,810 INFO ==> fps:0.250 iou 0.1 frocs:0.4846 val.py:176
+2024-03-25 16:17:46,812 INFO ==> fps:0.500 iou 0.1 frocs:0.6077 val.py:176
+2024-03-25 16:17:46,814 INFO ==> fps:1.000 iou 0.1 frocs:0.7358 val.py:176
+2024-03-25 16:17:46,816 INFO ==> fps:2.000 iou 0.1 frocs:0.7807 val.py:176
+2024-03-25 16:17:46,819 INFO ==> fps:4.000 iou 0.1 frocs:0.8304 val.py:176
+2024-03-25 16:17:46,821 INFO ==> fps:8.000 iou 0.1 frocs:0.8761 val.py:176
+2024-03-25 16:17:46,823 INFO ==> mean frocs:0.6718 val.py:177

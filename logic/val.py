@@ -65,7 +65,7 @@ def val(args,
         nms_keep_top_k: int = 40,
         min_d: int = 0,
         min_size: int = 0,
-        head_indexs: int = [0, 1],
+        head_indexs: int = [0],
         nodule_size_mode: str = 'seg_size') -> Dict[str, float]:
     
     annot_dir = os.path.join(exp_folder, 'annotation')
@@ -142,7 +142,7 @@ def val(args,
                 # NMS
                 if len(output) > 0:
                     keep = nms_3D(output[:, 1:], overlap=0.05, top_k=nms_keep_top_k)
-                    output = output[keep]
+                    output = output[keep.type(torch.long)]
                 output = output.numpy()
             
                 preds = convert_to_standard_output(output, series_names[i])  

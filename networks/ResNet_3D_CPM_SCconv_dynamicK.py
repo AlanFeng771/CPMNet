@@ -2,13 +2,12 @@ from typing import Tuple, List, Union, Dict
 import random
 import math
 import numpy as np
-import csv
+
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from utils.box_utils import nms_3D
-from .modules import SELayer, Identity, ConvBlock, act_layer, norm_layer3d
-import pandas
+from .modules import SELayer, Identity, ConvBlock, act_layer, norm_layer3d, SCConv3D
 
 def zyxdhw2zyxzyx(box, dim=-1):
     ctr_zyx, dhw = torch.split(box, 3, dim)
@@ -73,9 +72,120 @@ class BasicBlockNew(nn.Module):
 
         return x
 
+
+
+    def forward(self, x):
+        ident = self.res(x)
+
+        x = self.conv1(x)
+        x = self.conv2(x)
+
+        x = self.se(x)
+
+        x += ident
+        x = self.act(x)
+
+        return x
+
+class SCBottleneck(nn.Module):
+    """SCNet SCBottleneck
+    """
+    expansion = 4
+    pooling_r = 4 # down-sampling rate of the avg pooling layer in the K3 path of SC-Conv.
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, cardinality=1, bottleneck_width=32, avd=False, dilation=1, is_first=False, norm_type='batchnorm', act_type='ReLU'):
+        super(SCBottleneck, self).__init__()
+        group_width = int(planes * (bottleneck_width / 64.)) * cardinality
+        self.conv1_a = nn.Conv3d(inplanes, group_width, kernel_size=1, bias=False)
+#         self.bn1_a = norm_layer(group_width)
+        self.norm1_a = norm_layer3d(norm_type, group_width)
+        self.conv1_b = nn.Conv3d(inplanes, group_width, kernel_size=1, bias=False)
+#         self.bn1_b = norm_layer(group_width)
+        self.norm1_b = norm_layer3d(norm_type, group_width)
+        self.avd = avd and (stride > 1 or is_first)
+#         self.norm = norm_layer3d(norm_type, out_channels)
+        self.act = act_layer(act_type)
+        if self.avd:
+            self.avd_layer = nn.AvgPool3d(3, stride, padding=1)
+            stride = 1
+
+        self.k1 = nn.Sequential(
+                    nn.Conv3d(
+                        group_width, group_width, kernel_size=3, stride=stride,
+                        padding=dilation, dilation=dilation,
+                        groups=cardinality, bias=False),
+                    norm_layer(group_width),
+                    )
+
+        self.scconv = SCConv3D(
+            group_width, group_width, stride=stride,
+            padding=dilation, dilation=dilation,
+            groups=cardinality, pooling_r=self.pooling_r, norm_layer=norm_layer)
+
+        self.conv3 = nn.Conv3d(
+            group_width * 2, planes * 4, kernel_size=1, bias=False)
+        self.bn3 = norm_layer(planes*4)
+
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.dilation = dilation
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out_a= self.conv1_a(x)
+        out_a = self.norm1_a(out_a)
+        out_b = self.conv1_b(x)
+        out_b = self.norm1_b(out_b)
+        out_a = self.relu(out_a)
+        out_b = self.relu(out_b)
+
+        out_a = self.k1(out_a)
+        out_b = self.scconv(out_b)
+        out_a = self.relu(out_a)
+        out_b = self.relu(out_b)
+
+        if self.avd:
+            out_a = self.avd_layer(out_a)
+            out_b = self.avd_layer(out_b)
+
+        out = self.conv3(torch.cat([out_a, out_b], dim=1))
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out += residual
+        out = self.relu(out)
+
+        return out
+    
 class LayerBasic(nn.Module):
     def __init__(self, n_stages, in_channels, out_channels, stride=1, norm_type='batchnorm', act_type='ReLU', se=False):
         super(LayerBasic, self).__init__()
+        self.n_stages = n_stages
+        ops = []
+        for i in range(n_stages):
+            if i == 0:
+                input_channel = in_channels
+                stride = stride
+            else:
+                input_channel = out_channels
+                stride = 1
+
+            ops.append(
+                SCBottleneck(input_channel, out_channels, stride=stride, norm_type=norm_type, act_type=act_type))
+
+        self.conv = nn.Sequential(*ops)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
+
+class SCLayerBasic(nn.Module):
+    def __init__(self, n_stages, in_channels, out_channels, stride=1, norm_type='batchnorm', act_type='ReLU', se=False):
+        super(SCLayerBasic, self).__init__()
         self.n_stages = n_stages
         ops = []
         for i in range(n_stages):
@@ -241,21 +351,21 @@ class Resnet18(nn.Module):
         self.in_dw = ConvBlock(stem_filters, n_filters[0], stride=first_stride, norm_type=norm_type, act_type=act_type)
         
         # Encoder
-        self.block1 = LayerBasic(n_blocks[0], n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
+        self.block1 = SCLayerBasic(n_blocks[0], n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
         
         dw_block = DownsamplingConvBlock if dw_type == 'conv' else DownsamplingBlock
         self.block1_dw = dw_block(n_filters[0], n_filters[1], norm_type=norm_type, act_type=act_type)
 
-        self.block2 = LayerBasic(n_blocks[1], n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        self.block2 = SCLayerBasic(n_blocks[1], n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
         self.block2_dw = dw_block(n_filters[1], n_filters[2], norm_type=norm_type, act_type=act_type)
 
-        self.block3 = LayerBasic(n_blocks[2], n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
+        self.block3 = SCLayerBasic(n_blocks[2], n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
         self.block3_dw = dw_block(n_filters[2], n_filters[3], norm_type=norm_type, act_type=act_type)
 
         if aspp:
             self.block4 = ASPP(n_filters[3], norm_type=norm_type, act_type=act_type)
         else:
-            self.block4 = LayerBasic(n_blocks[3], n_filters[3], n_filters[3], norm_type=norm_type, act_type=act_type, se=se)
+            self.block4 = SCLayerBasic(n_blocks[3], n_filters[3], n_filters[3], norm_type=norm_type, act_type=act_type, se=se)
 
         # Dropout
         if dropout > 0:
@@ -266,16 +376,16 @@ class Resnet18(nn.Module):
         # Decoder
         up_block = UpsamplingDeconvBlock if up_type == 'deconv' else UpsamplingBlock
         self.block33_up = up_block(n_filters[3], n_filters[2], norm_type=norm_type, act_type=act_type)
-        self.block33_res = LayerBasic(1, n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
-        self.block33 = LayerBasic(2, n_filters[2] * 2, n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
+        self.block33_res = SCLayerBasic(1, n_filters[2], n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
+        self.block33 = SCLayerBasic(2, n_filters[2] * 2, n_filters[2], norm_type=norm_type, act_type=act_type, se=se)
 
         self.block22_up = up_block(n_filters[2], n_filters[1], norm_type=norm_type, act_type=act_type)
-        self.block22_res = LayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
-        self.block22 = LayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
-        
+        self.block22_res = SCLayerBasic(1, n_filters[1], n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+        self.block22 = SCLayerBasic(2, n_filters[1] * 2, n_filters[1], norm_type=norm_type, act_type=act_type, se=se)
+
 #         self.block11_up = UpsamplingDeconvBlock(n_filters[1], n_filters[0], norm_type=norm_type, act_type=act_type)
-#         self.block11_res = LayerBasic(1, n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
-#         self.block11 = LayerBasic(2, n_filters[0] * 2, n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
+#         self.block11_res = SCLayerBasic(1, n_filters[0], n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
+#         self.block11 = SCLayerBasic(2, n_filters[0] * 2, n_filters[0], norm_type=norm_type, act_type=act_type, se=se)
         # Head
         self.head = ClsRegHead(in_channels=n_filters[1], feature_size=n_filters[1], conv_num=3, norm_type=head_norm, act_type=act_type)
 #         self.head = ClsRegHead(in_channels=n_filters[0], feature_size=n_filters[0], conv_num=3, norm_type=head_norm, act_type=act_type)
@@ -382,8 +492,6 @@ class DetectionLoss(nn.Module):
         self.cls_num_hard = cls_num_hard
         self.cls_fn_weight = cls_fn_weight
         self.cls_fn_threshold = cls_fn_threshold
-        self.offset_loss = nn.SmoothL1Loss()
-        self.shape_loss = nn.SmoothL1Loss()
     @staticmethod  
     def cls_loss(pred: torch.Tensor, target, mask_ignore, alpha = 0.75 , gamma = 2.0, num_neg = 10000, num_hard = 100, ratio = 100, fn_weight = 4.0, fn_threshold = 0.8):
         """
@@ -559,15 +667,52 @@ class DetectionLoss(nn.Module):
         shape = annotations[:, :, 3:6] / 2 # half d h w
         
         sp = annotations[:, :, 6:9] # spacing, shape = (b, num_annotations, 3)
+        full_shape = annotations[:, :, 3:6]*sp
         sp = sp.unsqueeze(-2) # shape = (b, num_annotations, 1, 3)
         
         # distance (b, n_max_object, anchors)
         distance = -(((ctr_gt_boxes.unsqueeze(2) - anchor_points.unsqueeze(0)) * sp).pow(2).sum(-1))
         _, topk_inds = torch.topk(distance, (ignore_ratio + 1) * pos_target_topk, dim=-1, largest=True, sorted=True)
-        
-        mask_topk = F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).sum(-2) # (b, num_annotation, num_of_points), the value is 1 or 0
-        mask_ignore = -1 * F.one_hot(topk_inds[:, :, pos_target_topk:], distance.size()[-1]).sum(-2) # the value is -1 or 0
-        
+        # print('F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1])', F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).shape)
+
+        def get_k(shape, min=5, max=14):
+            size = torch.sum(shape)
+            if size < 52:
+                return min
+            elif size < 418:
+                return int((max-min)*((size-52)/366)+ min) 
+            else:
+                return max
+
+        # print('tot anno', topk_inds.shape[1])
+        mask_topk = None
+        mask_ignore = None
+        for index_batch in np.arange(topk_inds.shape[0]):
+            mask_topki = None
+            mask_ignorei = None
+            for index_annotaion in np.arange(topk_inds.shape[1]):
+                if mask_topki is None:
+                    k = get_k(full_shape[index_batch, index_annotaion])
+                    # print('k', k, full_shape[index_batch, index_annotaion], torch.sum(full_shape[index_batch, index_annotaion]))
+                    mask_topki = F.one_hot(topk_inds[index_batch, index_annotaion, :k], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    mask_ignorei = -1 * F.one_hot(topk_inds[index_batch, index_annotaion, k:k*ignore_ratio], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                else:
+                    k = get_k(full_shape[index_batch, index_annotaion])
+                    # print('k', k, full_shape[index_batch, index_annotaion], torch.sum(full_shape[index_batch, index_annotaion]))
+                    temp_topk = F.one_hot(topk_inds[index_batch, index_annotaion, :k], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    temp_ignore = -1 * F.one_hot(topk_inds[index_batch, index_annotaion, k:k*ignore_ratio], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    mask_topki = torch.cat([mask_topki, temp_topk], 1)
+                    mask_ignorei = torch.cat([mask_ignorei, temp_ignore], 1)
+            if mask_topk is None:
+                mask_topk = mask_topki
+                mask_ignore = mask_ignorei
+            else:
+                mask_topk = torch.cat([mask_topk, mask_topki])
+                mask_ignore = torch.cat([mask_ignore, mask_ignorei])
+
+        # mask_topk = F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).sum(-2) # (b, num_annotation, num_of_points), the value is 1 or 0
+        # mask_ignore = -1 * F.one_hot(topk_inds[:, :, pos_target_topk:], distance.size()[-1]).sum(-2) # the value is -1 or 0
+                
         # the value is 1 or 0, shape= (b, num_annotations, num_of_points)
         # mask_gt is 1 mean the annotation is not ignored, 0 means the annotation is ignored
         # mask_topk is 1 means the point is assigned to positive
@@ -665,21 +810,8 @@ class DetectionLoss(nn.Module):
             iou_losses = torch.tensor(0).float().to(device)
 
         else:
-            # with open('target_offset.csv', 'a', newline='') as target_offset_csvfile:
-            #     writer = csv.writer(target_offset_csvfile)
-            #     writer.writerows(target_offset[fg_mask].detach().cpu().numpy())
-            
-            reg_losses = self.shape_loss(pred1_shapes[fg_mask], target_shape[fg_mask])
-            offset_losses = self.offset_loss(pred1_offsets[fg_mask], target_offset[fg_mask])
-            # print('reg_losse', reg_losse)
-            # print('offset_loss', offset_loss)
-            # reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])
-            # reg_losses = reg_losses .mean()
-            # offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask])
-            # with open('loss_offset.csv', 'a', newline='') as loss_offset_csvfile:
-            #     writer = csv.writer(loss_offset_csvfile)
-            #     writer.writerows(offset_losses.detach().cpu().numpy())
-            # offset_losses = offset_losses.mean()
+            reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask]).mean()
+            offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask]).mean()
             iou_losses = - (self.bbox_iou(pred1_bboxes[fg_mask], target_bboxes[fg_mask])).mean()
             
 #             reg2_losses = torch.abs(pred2_shapes[fg_mask] - target_shape[fg_mask])
@@ -691,7 +823,7 @@ class DetectionLoss(nn.Module):
 #             iou_losses = torch.cat([iou1_losses, iou2_losses]).mean()
 
         return classification_losses, reg_losses, offset_losses, iou_losses
-
+    
 class DetectionPostprocess(nn.Module):
     def __init__(self, topk: int=60, threshold: float=0.15, nms_threshold: float=0.05, nms_topk: int=20, crop_size: List[int]=[64, 96, 96]):
         super(DetectionPostprocess, self).__init__()

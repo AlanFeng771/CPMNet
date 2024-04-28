@@ -2,13 +2,12 @@ from typing import Tuple, List, Union, Dict
 import random
 import math
 import numpy as np
-import csv
+
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from utils.box_utils import nms_3D
 from .modules import SELayer, Identity, ConvBlock, act_layer, norm_layer3d
-import pandas
 
 def zyxdhw2zyxzyx(box, dim=-1):
     ctr_zyx, dhw = torch.split(box, 3, dim)
@@ -382,8 +381,6 @@ class DetectionLoss(nn.Module):
         self.cls_num_hard = cls_num_hard
         self.cls_fn_weight = cls_fn_weight
         self.cls_fn_threshold = cls_fn_threshold
-        self.offset_loss = nn.SmoothL1Loss()
-        self.shape_loss = nn.SmoothL1Loss()
     @staticmethod  
     def cls_loss(pred: torch.Tensor, target, mask_ignore, alpha = 0.75 , gamma = 2.0, num_neg = 10000, num_hard = 100, ratio = 100, fn_weight = 4.0, fn_threshold = 0.8):
         """
@@ -529,7 +526,8 @@ class DetectionLoss(nn.Module):
             + (b2_z1 + b2_z2 - b1_z1 - b1_z2) ** 2) / 4  # center dist ** 2 
             return iou - rho2 / c2  # DIoU
         return iou  # IoU
-    
+        
+
     @staticmethod
     def get_pos_target(annotations: torch.Tensor,
                        anchor_points: torch.Tensor,
@@ -559,15 +557,52 @@ class DetectionLoss(nn.Module):
         shape = annotations[:, :, 3:6] / 2 # half d h w
         
         sp = annotations[:, :, 6:9] # spacing, shape = (b, num_annotations, 3)
+        full_shape = annotations[:, :, 3:6]*sp
         sp = sp.unsqueeze(-2) # shape = (b, num_annotations, 1, 3)
         
         # distance (b, n_max_object, anchors)
         distance = -(((ctr_gt_boxes.unsqueeze(2) - anchor_points.unsqueeze(0)) * sp).pow(2).sum(-1))
         _, topk_inds = torch.topk(distance, (ignore_ratio + 1) * pos_target_topk, dim=-1, largest=True, sorted=True)
-        
-        mask_topk = F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).sum(-2) # (b, num_annotation, num_of_points), the value is 1 or 0
-        mask_ignore = -1 * F.one_hot(topk_inds[:, :, pos_target_topk:], distance.size()[-1]).sum(-2) # the value is -1 or 0
-        
+        # print('F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1])', F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).shape)
+
+        def get_k(shape, min=5, max=14):
+            size = torch.sum(shape)
+            if size < 52:
+                return min
+            elif size < 418:
+                return int((max-min)*((size-52)/366)+ min) 
+            else:
+                return max
+
+        # print('tot anno', topk_inds.shape[1])
+        mask_topk = None
+        mask_ignore = None
+        for index_batch in np.arange(topk_inds.shape[0]):
+            mask_topki = None
+            mask_ignorei = None
+            for index_annotaion in np.arange(topk_inds.shape[1]):
+                if mask_topki is None:
+                    k = get_k(full_shape[index_batch, index_annotaion])
+                    # print('k', k, full_shape[index_batch, index_annotaion], torch.sum(full_shape[index_batch, index_annotaion]))
+                    mask_topki = F.one_hot(topk_inds[index_batch, index_annotaion, :k], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    mask_ignorei = -1 * F.one_hot(topk_inds[index_batch, index_annotaion, k:k*ignore_ratio], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                else:
+                    k = get_k(full_shape[index_batch, index_annotaion])
+                    # print('k', k, full_shape[index_batch, index_annotaion], torch.sum(full_shape[index_batch, index_annotaion]))
+                    temp_topk = F.one_hot(topk_inds[index_batch, index_annotaion, :k], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    temp_ignore = -1 * F.one_hot(topk_inds[index_batch, index_annotaion, k:k*ignore_ratio], distance.size()[-1]).sum(-2).unsqueeze(0).unsqueeze(0)
+                    mask_topki = torch.cat([mask_topki, temp_topk], 1)
+                    mask_ignorei = torch.cat([mask_ignorei, temp_ignore], 1)
+            if mask_topk is None:
+                mask_topk = mask_topki
+                mask_ignore = mask_ignorei
+            else:
+                mask_topk = torch.cat([mask_topk, mask_topki])
+                mask_ignore = torch.cat([mask_ignore, mask_ignorei])
+
+        # mask_topk = F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).sum(-2) # (b, num_annotation, num_of_points), the value is 1 or 0
+        # mask_ignore = -1 * F.one_hot(topk_inds[:, :, pos_target_topk:], distance.size()[-1]).sum(-2) # the value is -1 or 0
+                
         # the value is 1 or 0, shape= (b, num_annotations, num_of_points)
         # mask_gt is 1 mean the annotation is not ignored, 0 means the annotation is ignored
         # mask_topk is 1 means the point is assigned to positive
@@ -665,21 +700,8 @@ class DetectionLoss(nn.Module):
             iou_losses = torch.tensor(0).float().to(device)
 
         else:
-            # with open('target_offset.csv', 'a', newline='') as target_offset_csvfile:
-            #     writer = csv.writer(target_offset_csvfile)
-            #     writer.writerows(target_offset[fg_mask].detach().cpu().numpy())
-            
-            reg_losses = self.shape_loss(pred1_shapes[fg_mask], target_shape[fg_mask])
-            offset_losses = self.offset_loss(pred1_offsets[fg_mask], target_offset[fg_mask])
-            # print('reg_losse', reg_losse)
-            # print('offset_loss', offset_loss)
-            # reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])
-            # reg_losses = reg_losses .mean()
-            # offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask])
-            # with open('loss_offset.csv', 'a', newline='') as loss_offset_csvfile:
-            #     writer = csv.writer(loss_offset_csvfile)
-            #     writer.writerows(offset_losses.detach().cpu().numpy())
-            # offset_losses = offset_losses.mean()
+            reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask]).mean()
+            offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask]).mean()
             iou_losses = - (self.bbox_iou(pred1_bboxes[fg_mask], target_bboxes[fg_mask])).mean()
             
 #             reg2_losses = torch.abs(pred2_shapes[fg_mask] - target_shape[fg_mask])

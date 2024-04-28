@@ -27,7 +27,7 @@ def get_args():
     # training settings
     parser.add_argument('--seed', type=int, default=0, help='random seed (default: 0)')
     parser.add_argument('--val_mixed_precision', action='store_true', default=False, help='use mixed precision')
-    parser.add_argument('--batch_size', type=int, default=2, help='input batch size for training (default: 2)')
+    parser.add_argument('--batch_size', type=int, default=1, help='input batch size for training (default: 2)')
     parser.add_argument('--crop_size', nargs='+', type=int, default=[96, 96, 96], help='crop size')
     parser.add_argument('--overlap_ratio', type=float, default=DEFAULT_OVERLAP_RATIO, help='overlap ratio')
     parser.add_argument('--model_path', type=str, default='')
@@ -64,6 +64,8 @@ def prepare_validation(args, device):
         from networks.ResNet_3D_CPM_multiHead_sride2 import DetectionPostprocess
     elif args.network_name == 'ResNet_3D_CPM_SCconv':
         from networks.ResNet_3D_CPM_SCconv import DetectionPostprocess
+    elif args.network_name == 'ResNet_3D_CPM_dynamicK':
+        from networks.ResNet_3D_CPM_dynamicK import DetectionPostprocess
     else:
         print('network_name can\'t find')
         exit()

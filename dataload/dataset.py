@@ -97,16 +97,21 @@ class TrainDataset(Dataset):
         samples['all_rad'] = label['all_rad'] # d, h, w
         samples['all_cls'] = label['all_cls']
         samples['file_name'] = series_name
+        
         samples = self.crop_fn(samples, image_spacing)
         random_samples = []
 
         for i in range(len(samples)):
             sample = samples[i]
+            # print('1', sample.keys())
             sample['image'] = normalize_raw_image(sample['image'])
+            # print('2', sample.keys())
             if self.transform_post:
                 sample['ctr_transform'] = []
                 sample = self.transform_post(sample)
+            # print('3', sample.keys())
             sample['image'] = normalize_processed_image(sample['image'], self.norm_method)
+            # print('4', sample.keys())
             random_samples.append(sample)
 
         return random_samples

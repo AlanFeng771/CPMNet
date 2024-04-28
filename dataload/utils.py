@@ -14,10 +14,10 @@ ALL_RAD = 'all_rad'
 ALL_CLS = 'all_cls'
 
 def gen_dicom_path(folder: str, series_name: str) -> str:
-    return os.path.join(folder, series_name, 'npy', f'{series_name}.npy')
+    return os.path.join(folder, series_name, 'npy', f'{series_name}_crop.npy')
 
 def gen_label_path(folder: str, series_name: str) -> str:
-    return os.path.join(folder, series_name, 'mask', f'{series_name}_nodule_count.json')
+    return os.path.join(folder, series_name, 'mask', f'{series_name}_nodule_count_crop.json')
 
 def load_series_list(series_list_path: str) -> List[List[str]]:
     """

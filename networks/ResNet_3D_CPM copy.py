@@ -2,13 +2,12 @@ from typing import Tuple, List, Union, Dict
 import random
 import math
 import numpy as np
-import csv
+
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
 from utils.box_utils import nms_3D
 from .modules import SELayer, Identity, ConvBlock, act_layer, norm_layer3d
-import pandas
 
 def zyxdhw2zyxzyx(box, dim=-1):
     ctr_zyx, dhw = torch.split(box, 3, dim)
@@ -382,8 +381,6 @@ class DetectionLoss(nn.Module):
         self.cls_num_hard = cls_num_hard
         self.cls_fn_weight = cls_fn_weight
         self.cls_fn_threshold = cls_fn_threshold
-        self.offset_loss = nn.SmoothL1Loss()
-        self.shape_loss = nn.SmoothL1Loss()
     @staticmethod  
     def cls_loss(pred: torch.Tensor, target, mask_ignore, alpha = 0.75 , gamma = 2.0, num_neg = 10000, num_hard = 100, ratio = 100, fn_weight = 4.0, fn_threshold = 0.8):
         """
@@ -665,21 +662,12 @@ class DetectionLoss(nn.Module):
             iou_losses = torch.tensor(0).float().to(device)
 
         else:
-            # with open('target_offset.csv', 'a', newline='') as target_offset_csvfile:
-            #     writer = csv.writer(target_offset_csvfile)
-            #     writer.writerows(target_offset[fg_mask].detach().cpu().numpy())
-            
-            reg_losses = self.shape_loss(pred1_shapes[fg_mask], target_shape[fg_mask])
-            offset_losses = self.offset_loss(pred1_offsets[fg_mask], target_offset[fg_mask])
-            # print('reg_losse', reg_losse)
-            # print('offset_loss', offset_loss)
-            # reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])
-            # reg_losses = reg_losses .mean()
-            # offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask])
-            # with open('loss_offset.csv', 'a', newline='') as loss_offset_csvfile:
-            #     writer = csv.writer(loss_offset_csvfile)
-            #     writer.writerows(offset_losses.detach().cpu().numpy())
-            # offset_losses = offset_losses.mean()
+            print('target_offset[fg_mask]', target_offset[fg_mask].shape)
+            print(target_offset[fg_mask][:, 0])
+            print('torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])', torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask]).shape)
+            print(torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask])[:, 0])
+            reg_losses = torch.abs(pred1_shapes[fg_mask] - target_shape[fg_mask]).mean()
+            offset_losses = torch.abs(pred1_offsets[fg_mask] - target_offset[fg_mask]).mean()
             iou_losses = - (self.bbox_iou(pred1_bboxes[fg_mask], target_bboxes[fg_mask])).mean()
             
 #             reg2_losses = torch.abs(pred2_shapes[fg_mask] - target_shape[fg_mask])
