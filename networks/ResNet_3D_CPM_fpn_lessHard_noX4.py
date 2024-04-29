@@ -476,8 +476,7 @@ class DetectionLoss(nn.Module):
     def target_proprocess(annotations: torch.Tensor, 
                           device, 
                           input_size: List[int],
-                          mask_ignore: torch.Tensor,
-                          size_of_interest: List[int]) -> Tuple[torch.Tensor, torch.Tensor]:
+                          mask_ignore: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Preprocess the annotations to generate the targets for the network.
         In this function, we remove some annotations that the area of nodule is too small in the crop box. (Probably cropped by the edge of the image)
         
@@ -493,21 +492,19 @@ class DetectionLoss(nn.Module):
         Returns: 
             A tuple of two tensors:
                 (1) annotations_new: torch.Tensor
-                    A tensor of shape (batch_size, num_feature_map, num_annotations, 10) containing the annotations in the format:
+                    A tensor of shape (batch_size, num_annotations, 10) containing the annotations in the format:
                     (ctr_z, ctr_y, ctr_x, d, h, w, spacing_z, spacing_y, spacing_x, 0 or -1). The last index -1 means the annotation is ignored.
                 (2) mask_ignore: torch.Tensor
                     A tensor of shape (batch_size, 1, z, y, x) to store the mask ignore.
         """
-        # size_of_interest = torch.tensor([0, 2, 4])
         batch_size = annotations.shape[0]
-        # annotations_new = -1 * torch.ones_like(annotations, device=device)
-        annotations_new = -1 * torch.ones([batch_size, size_of_interest.shape[0], annotations.shape[1], annotations.shape[2]], device=device)
-        crop_box = torch.tensor([0., 0., 0., input_size[0], input_size[1], input_size[2]], device=device)
+        annotations_new = -1 * torch.ones_like(annotations, device=device)
         for sample_i in range(batch_size):
             annots = annotations[sample_i]
             gt_bboxes = annots[annots[:, -1] > -1] # -1 means ignore, it is used to make each sample has same number of bbox (pad with -1)
-            bbox_annotations_target = [[] for _ in range(len(size_of_interest))]
+            bbox_annotation_target = []
             
+            crop_box = torch.tensor([0., 0., 0., input_size[0], input_size[1], input_size[2]], device=device)
             for s in range(len(gt_bboxes)):
                 each_label = gt_bboxes[s] # (z_ctr, y_ctr, x_ctr, d, h, w, spacing_z, spacing_y, spacing_x, 0 or -1)
                 # coordinate convert zmin, ymin, xmin, d, h, w
@@ -525,24 +522,15 @@ class DetectionLoss(nn.Module):
                 if nd * nh * nw == 0:
                     continue
                 percent = nw * nh * nd / (each_label[3] * each_label[4] * each_label[5])
-                max_side = max(nd, nh, nw)
                 if (percent > 0.1) and (nw*nh*nd >= 15):
-                    for i in range(len(size_of_interest)-1):
-                        if max_side >= size_of_interest[i] and max_side < size_of_interest[i+1]:
-                            rank = i
-                        else:
-                            rank = len(size_of_interest)-1
                     spacing_z, spacing_y, spacing_x = each_label[6:9]
                     bbox = torch.from_numpy(np.array([float(z1 + 0.5 * nd), float(y1 + 0.5 * nh), float(x1 + 0.5 * nw), float(nd), float(nh), float(nw), float(spacing_z), float(spacing_y), float(spacing_x), 0])).to(device)
-                    bbox_annotations_target[rank].append(bbox.view(1, 10))
+                    bbox_annotation_target.append(bbox.view(1, 10))
                 else:
                     mask_ignore[sample_i, 0, int(z1) : int(torch.ceil(z2)), int(y1) : int(torch.ceil(y2)), int(x1) : int(torch.ceil(x2))] = -1
-            
-            for i, bbox_annotation_target in enumerate(bbox_annotations_target):
-                if len(bbox_annotation_target) > 0:
-                    bbox_annotation_target = torch.cat(bbox_annotation_target, 0)
-                    annotations_new[sample_i, i, :len(bbox_annotation_target)] = bbox_annotation_target
-
+            if len(bbox_annotation_target) > 0:
+                bbox_annotation_target = torch.cat(bbox_annotation_target, 0)
+                annotations_new[sample_i, :len(bbox_annotation_target)] = bbox_annotation_target
         return annotations_new, mask_ignore
     
     @staticmethod
@@ -581,7 +569,7 @@ class DetectionLoss(nn.Module):
                        stride: torch.Tensor,
                        pos_target_topk = 7, 
                        ignore_ratio = 3):# larger the ignore_ratio, the more GPU memory is used
-        """Get the positive targets for the network (multi head, each head have a set of positive targests).
+        """Get the positive targets for the network.
         Steps:
             1. Calculate the distance between each annotation and each anchor point.
             2. Find the top k anchor points with the smallest distance for each annotation.
@@ -601,14 +589,15 @@ class DetectionLoss(nn.Module):
         
         # The coordinates in annotations is on original image, we need to convert it to the coordinates on the feature map.
         ctr_gt_boxes = annotations[:, :, :3] / stride # z0, y0, x0
-        shape = annotations[:, :, 3:6] / 2 # half d h w, shape = (b, num_annotations, 3)
+        shape = annotations[:, :, 3:6] / 2 # half d h w
         
         sp = annotations[:, :, 6:9] # spacing, shape = (b, num_annotations, 3)
         sp = sp.unsqueeze(-2) # shape = (b, num_annotations, 1, 3)
         
-        # distance (b, n_max_object), anchors)  alan: n_max_object == num_annotations
+        # distance (b, n_max_object, anchors)
         distance = -(((ctr_gt_boxes.unsqueeze(2) - anchor_points.unsqueeze(0)) * sp).pow(2).sum(-1))
         _, topk_inds = torch.topk(distance, (ignore_ratio + 1) * pos_target_topk, dim=-1, largest=True, sorted=True)
+        
         mask_topk = F.one_hot(topk_inds[:, :, :pos_target_topk], distance.size()[-1]).sum(-2) # (b, num_annotation, num_of_points), the value is 1 or 0
         mask_ignore = -1 * F.one_hot(topk_inds[:, :, pos_target_topk:], distance.size()[-1]).sum(-2) # the value is -1 or 0
         
@@ -664,7 +653,7 @@ class DetectionLoss(nn.Module):
         pred_offsets = pred_offsets.permute(0, 2, 1).contiguous()
         
         # process annotations
-        process_annotations, target_mask_ignore = self.target_proprocess(annotations, device, self.crop_size, target_mask_ignore, [0, 2, 4])
+        process_annotations, target_mask_ignore = self.target_proprocess(annotations, device, self.crop_size, target_mask_ignore)
         target_mask_ignore = target_mask_ignore.view(batch_size, 1,  -1)
         target_mask_ignore = target_mask_ignore.permute(0, 2, 1).contiguous()
         # generate center points. Only support single scale feature
